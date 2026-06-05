@@ -1,338 +1,363 @@
 #!/usr/bin/env python3
 """
 ============================================================
-COMPONENT A: Virtual Track Telemetry Simulator
+VAJRA — CWR Track Sensor Telemetry Simulator (State-Based)
 Project: CWR Stress & Broken Rail Anomaly Detection Engine
-Section: NDLS-AGRA-SEC1 | Kilometer Marker: 412
-Author: RailTech AI Initiative
+Section: NDLS-AGRA-SEC1  |  Kilometer Marker: 412
 ============================================================
 
-Simulates a track-mounted IoT sensor array streaming live
-stress and temperature telemetry to the Spring Boot API.
-Injects critical structural anomalies at ~15% probability
-to simulate CWR buckling / rail-fracture events.
+State Machine:
+  NOMINAL  ──(1/300 chance)──▶  ESCALATING  ──▶  CRITICAL  ──▶  RECOVERING  ──▶  NOMINAL
+
+- NOMINAL    : Healthy baseline. Stress 70–90 MPa, Temp 25–35°C.
+- ESCALATING : Thermal pre-stress buildup over 4–6 ticks.
+- CRITICAL   : Full structural anomaly. Stress >150 MPa. Lasts 5–8 ticks.
+- RECOVERING : Gradual return to safe range over 5–8 ticks.
+
+Connection handling: per-target exponential backoff retry (max 3 attempts).
 """
 
 import requests
 import time
 import random
 import math
-import json
 import sys
 from datetime import datetime, timezone
+from enum import Enum, auto
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Fan-out targets — simulator posts to ALL of these on every tick.
-# Set a name to None to disable that target without removing it.
 TARGETS = {
     "localhost" : "http://localhost:8080/api/track-telemetry",
     "railway"   : "https://vajra-production.up.railway.app/api/track-telemetry",
-    "render"    : "https://vajra-app.onrender.com/api/track-telemetry",
+    "render"    : "https://vajra-bei6.onrender.com/api/track-telemetry",
 }
 
-SECTION_ID        = "NDLS-AGRA-SEC1"
-KM_MARKER         = 412
-INTERVAL_SECONDS  = 1.0          # Stream frequency
-ANOMALY_CHANCE    = 0.15         # 15% probability of injecting a critical event
-REQUEST_TIMEOUT   = 5            # HTTP timeout per target (seconds)
+# Per-target timeouts: Railway = fast fail, Render = cold-start tolerant
+TARGET_TIMEOUTS = {
+    "localhost" : 3,
+    "railway"   : 4,
+    "render"    : 55,
+}
 
-# Nominal operating envelope (healthy CWR ranges for Indian summer)
-BASELINE_TEMP_C   = 32.0         # Typical ambient rail temp in °C
-TEMP_FLUCTUATION  = 4.0          # ± natural thermal drift in °C
-BASELINE_STRESS   = 68.0         # MPa — within safe compressive range
-STRESS_FLUCTUATION = 12.0        # ± MPa natural variation from train load
+SECTION_ID       = "NDLS-AGRA-SEC1"
+KM_MARKER        = 412
+INTERVAL_SECONDS = 1.0      # Stream cadence (seconds)
+
+# Anomaly trigger: 1 event per ~300 NOMINAL packets (0.33% probability)
+ANOMALY_TRIGGER_PROB = 1 / 300
+
+# Healthy envelope
+NOMINAL_STRESS_MIN = 70.0   # MPa
+NOMINAL_STRESS_MAX = 90.0   # MPa
+NOMINAL_TEMP_MIN   = 25.0   # °C
+NOMINAL_TEMP_MAX   = 35.0   # °C
+
+# Critical envelope (IS:3443 / UIC 60 breach thresholds)
+CRITICAL_STRESS_MIN = 150.0
+CRITICAL_STRESS_MAX = 210.0
+CRITICAL_TEMP_MIN   = 51.0
+CRITICAL_TEMP_MAX   = 72.0
+
+MAX_RETRIES        = 3      # Per-target retry attempts on failure
+RETRY_BASE_DELAY   = 0.4    # Seconds — doubles each attempt (exponential backoff)
 
 
-def print_banner():
+# ─────────────────────────────────────────────────────────────────────────────
+# STATE MACHINE
+# ─────────────────────────────────────────────────────────────────────────────
+
+class State(Enum):
+    NOMINAL     = auto()
+    ESCALATING  = auto()
+    CRITICAL    = auto()
+    RECOVERING  = auto()
+
+
+class TrackStateMachine:
+    """
+    Manages the lifecycle of a single CWR sensor section.
+    Produces physically plausible telemetry values for each state phase.
+    """
+
+    def __init__(self):
+        self.state          = State.NOMINAL
+        self.phase_ticks    = 0        # Ticks remaining in current phase
+        self.escalate_steps = 0        # Total ticks in ESCALATING phase
+        self.escalate_idx   = 0        # Current step index
+        self.recover_steps  = 0        # Total ticks in RECOVERING phase
+        self.recover_idx    = 0        # Current step index
+
+        # Snapshot values at state boundaries for smooth interpolation
+        self._peak_stress   = 0.0
+        self._peak_temp     = 0.0
+        self._last_stress   = random.uniform(NOMINAL_STRESS_MIN, NOMINAL_STRESS_MAX)
+        self._last_temp     = random.uniform(NOMINAL_TEMP_MIN,   NOMINAL_TEMP_MAX)
+
+    # ── public ──────────────────────────────────────────────────────────────
+
+    def tick(self) -> dict:
+        """Advance the state machine by one tick and return a telemetry dict."""
+        if self.state == State.NOMINAL:
+            return self._tick_nominal()
+        elif self.state == State.ESCALATING:
+            return self._tick_escalating()
+        elif self.state == State.CRITICAL:
+            return self._tick_critical()
+        elif self.state == State.RECOVERING:
+            return self._tick_recovering()
+
+    # ── state handlers ───────────────────────────────────────────────────────
+
+    def _tick_nominal(self) -> dict:
+        # Slow random walk within healthy envelope
+        stress = self._last_stress + random.gauss(0, 1.5)
+        stress = max(NOMINAL_STRESS_MIN, min(stress, NOMINAL_STRESS_MAX))
+
+        temp   = self._last_temp + random.gauss(0, 0.4)
+        temp   = max(NOMINAL_TEMP_MIN, min(temp, NOMINAL_TEMP_MAX))
+
+        self._last_stress = stress
+        self._last_temp   = temp
+
+        # Decide whether to trigger an anomaly sequence
+        if random.random() < ANOMALY_TRIGGER_PROB:
+            self._begin_escalation(stress, temp)
+
+        return self._packet(stress, temp, anomaly=False)
+
+    def _tick_escalating(self) -> dict:
+        """Smooth linear ramp from nominal values toward critical peak."""
+        frac   = (self.escalate_idx + 1) / self.escalate_steps
+        stress = self._last_stress + frac * (self._peak_stress - self._last_stress)
+        temp   = self._last_temp   + frac * (self._peak_temp   - self._last_temp)
+
+        self.escalate_idx += 1
+        if self.escalate_idx >= self.escalate_steps:
+            self._begin_critical()
+
+        return self._packet(stress, temp, anomaly=False)
+
+    def _tick_critical(self) -> dict:
+        """Peak anomaly — stress >150 MPa with realistic jitter."""
+        stress = self._peak_stress + random.gauss(0, 3.0)
+        stress = max(CRITICAL_STRESS_MIN, stress)
+
+        temp   = self._peak_temp + random.gauss(0, 0.8)
+        temp   = max(CRITICAL_TEMP_MIN, temp)
+
+        self.phase_ticks -= 1
+        if self.phase_ticks <= 0:
+            self._begin_recovery(stress, temp)
+
+        return self._packet(stress, temp, anomaly=True)
+
+    def _tick_recovering(self) -> dict:
+        """Smooth decay back toward healthy nominal values."""
+        target_stress = random.uniform(NOMINAL_STRESS_MIN, NOMINAL_STRESS_MAX)
+        target_temp   = random.uniform(NOMINAL_TEMP_MIN,   NOMINAL_TEMP_MAX)
+
+        frac   = (self.recover_idx + 1) / self.recover_steps
+        stress = self._peak_stress + frac * (target_stress - self._peak_stress)
+        temp   = self._peak_temp   + frac * (target_temp   - self._peak_temp)
+
+        self.recover_idx += 1
+        if self.recover_idx >= self.recover_steps:
+            self._last_stress = stress
+            self._last_temp   = temp
+            self.state        = State.NOMINAL
+
+        return self._packet(stress, temp, anomaly=False)
+
+    # ── transitions ──────────────────────────────────────────────────────────
+
+    def _begin_escalation(self, from_stress: float, from_temp: float):
+        self.state          = State.ESCALATING
+        self.escalate_steps = random.randint(4, 7)
+        self.escalate_idx   = 0
+        self._peak_stress   = random.uniform(CRITICAL_STRESS_MIN, CRITICAL_STRESS_MAX)
+        self._peak_temp     = random.uniform(CRITICAL_TEMP_MIN,   CRITICAL_TEMP_MAX)
+        # Store current values as baseline for interpolation
+        self._last_stress   = from_stress
+        self._last_temp     = from_temp
+
+    def _begin_critical(self):
+        self.state       = State.CRITICAL
+        self.phase_ticks = random.randint(5, 9)
+
+    def _begin_recovery(self, from_stress: float, from_temp: float):
+        self.state         = State.RECOVERING
+        self.recover_steps = random.randint(5, 9)
+        self.recover_idx   = 0
+        self._peak_stress  = from_stress
+        self._peak_temp    = from_temp
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _packet(self, stress: float, temp: float, anomaly: bool) -> dict:
+        return {
+            "sectionId"       : SECTION_ID,
+            "kmMarker"        : KM_MARKER,
+            "railTemperature" : round(temp,   2),
+            "stressMPa"       : round(stress, 2),
+            "anomalyInjected" : anomaly,
+            "timestamp"       : datetime.now(timezone.utc).isoformat(),
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NETWORK — PER-TARGET EXPONENTIAL BACKOFF RETRY
+# ─────────────────────────────────────────────────────────────────────────────
+
+def send_with_retry(name: str, url: str, packet: dict) -> tuple:
+    """
+    POST packet to a single endpoint with exponential backoff retry.
+    Returns (http_status: int, elapsed_ms: float).
+    Never raises — failure is always returned as a status code.
+    """
+    timeout = TARGET_TIMEOUTS.get(name, 5)
+    delay   = RETRY_BASE_DELAY
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            t0       = time.time()
+            response = requests.post(
+                url,
+                json=packet,
+                headers={"Content-Type": "application/json"},
+                timeout=timeout,
+            )
+            elapsed_ms = (time.time() - t0) * 1000
+            return response.status_code, elapsed_ms
+
+        except requests.exceptions.ConnectionError:
+            if attempt < MAX_RETRIES:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            _warn(f"[{name}] unreachable after {MAX_RETRIES} attempts.")
+            return 0, 0.0
+
+        except requests.exceptions.Timeout:
+            if attempt < MAX_RETRIES:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            _warn(f"[{name}] timed out after {timeout}s × {MAX_RETRIES} attempts — cold start?")
+            return 408, 0.0
+
+        except Exception as ex:
+            _err(f"[{name}] unexpected error: {ex}")
+            return -1, 0.0
+
+    return 0, 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TERMINAL OUTPUT HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _c(text: str, code: str) -> str:
+    """ANSI color wrapper."""
+    return f"\033[{code}m{text}\033[0m"
+
+def _warn(msg: str):
+    print(_c(f"  [WARN]  {msg}", "0;33"))
+
+def _err(msg: str):
+    print(_c(f"  [ERROR] {msg}", "1;31"))
+
+
+def print_banner(sensor: TrackStateMachine):
     target_lines = "\n".join(
         f"  │  [{name:10s}] {url}"
         for name, url in TARGETS.items()
     )
-    banner = f"""
+    print(f"""
 ╔══════════════════════════════════════════════════════════════╗
-║  🚆  VAJRA — CWR TRACK SENSOR TELEMETRY SIMULATOR          ║
-║  Section : NDLS-AGRA-SEC1  |  KM Marker : 412               ║
-║  Interval: {INTERVAL_SECONDS}s  |  Anomaly Prob : {int(ANOMALY_CHANCE * 100)}%                      ║
+║  🚆  VAJRA — CWR STATE-BASED TELEMETRY SIMULATOR            ║
+║  Section : {SECTION_ID}  |  KM : {KM_MARKER}               ║
+║  Anomaly Probability : 1 per ~300 packets ({ANOMALY_TRIGGER_PROB*100:.2f}%)          ║
 ║  Fan-out targets ({len(TARGETS)}):                                       ║
 {target_lines}
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
-"""
-    print(banner)
+""")
 
 
-def simulate_train_vibration_noise(t: float) -> float:
-    """
-    Compose multi-frequency sinusoidal noise to mimic real track vibration
-    from passing trains (wheel-flange harmonics, bogie resonance, track joints).
-    Returns a ± MPa jitter value.
-    """
-    # Bogie frequency ~2 Hz, wheel harmonic ~11 Hz, track mode ~0.3 Hz
-    noise = (
-        3.2 * math.sin(2 * math.pi * 2.0  * t + random.uniform(0, 1)) +
-        1.1 * math.sin(2 * math.pi * 11.0 * t + random.uniform(0, 1)) +
-        4.8 * math.sin(2 * math.pi * 0.3  * t + random.uniform(0, 1))
-    )
-    return noise
+def log_packet(packet: dict, primary_status: int, primary_elapsed: float,
+               state: State, packet_count: int):
+    """Render a compact, color-coded line per tick."""
+    ts     = packet["timestamp"][11:23]
+    temp   = packet["railTemperature"]
+    stress = packet["stressMPa"]
 
-
-def generate_healthy_reading(t: float) -> dict:
-    """
-    Generate a realistic healthy telemetry packet with natural
-    environmental drift and train-induced vibration noise.
-    """
-    # Thermal drift: slow sinusoidal variation over the day
-    diurnal_temp = BASELINE_TEMP_C + TEMP_FLUCTUATION * math.sin(2 * math.pi * t / 3600)
-    temp_noise   = random.gauss(0, 0.8)
-    rail_temp    = round(diurnal_temp + temp_noise, 2)
-
-    # Stress: correlated to temperature (thermal expansion) + vibration + Gaussian noise
-    thermal_stress  = BASELINE_STRESS + (rail_temp - BASELINE_TEMP_C) * 0.9
-    vibration_stress = simulate_train_vibration_noise(t)
-    gaussian_noise   = random.gauss(0, 2.0)
-    stress_mpa       = round(thermal_stress + vibration_stress + gaussian_noise, 2)
-
-    # Clamp to physical plausibility (can't be negative or exceed normal ops max)
-    stress_mpa = max(30.0, min(stress_mpa, 118.0))
-    rail_temp  = max(20.0, min(rail_temp, 49.0))
-
-    return {
-        "sectionId":      SECTION_ID,
-        "kmMarker":       KM_MARKER,
-        "railTemperature": rail_temp,
-        "stressMPa":      stress_mpa,
-        "anomalyInjected": False,
-        "timestamp":       datetime.now(timezone.utc).isoformat()
+    state_labels = {
+        State.NOMINAL    : _c("● NOMINAL    ", "0;32"),
+        State.ESCALATING : _c("▲ ESCALATING ", "1;33"),
+        State.CRITICAL   : _c("⚠ CRITICAL   ", "1;31"),
+        State.RECOVERING : _c("▼ RECOVERING ", "0;36"),
     }
 
-
-def generate_critical_anomaly(t: float) -> dict:
-    """
-    Inject a simulated CWR failure event:
-    — Rail Buckling (summer): extreme temp spike + compressive stress surge
-    — Rail Fracture (winter): sudden tensile stress overload
-    Both exceed the emergency thresholds defined in IS:3443 / UIC 60 standards.
-    """
-    event_type = random.choice(["BUCKLING", "FRACTURE"])
-
-    if event_type == "BUCKLING":
-        # Thermal buckling: rail heats beyond neutral temperature, lateral displacement
-        rail_temp  = round(random.uniform(51.0, 68.0), 2)  # Exceeds 50°C threshold
-        stress_mpa = round(random.uniform(122.0, 185.0), 2) # Compressive surge
-        mode       = "THERMAL_BUCKLING"
-    else:
-        # Rail fracture: sudden tensile stress from contraction / wheel impact
-        rail_temp  = round(random.uniform(35.0, 49.5), 2)  # Near-normal temp
-        stress_mpa = round(random.uniform(143.0, 210.0), 2) # Tensile overload
-        mode       = "TENSILE_FRACTURE"
-
-    return {
-        "sectionId":       SECTION_ID,
-        "kmMarker":        KM_MARKER,
-        "railTemperature": rail_temp,
-        "stressMPa":       stress_mpa,
-        "anomalyInjected": True,
-        "anomalyMode":     mode,
-        "timestamp":       datetime.now(timezone.utc).isoformat()
-    }
-
-
-def colorize(text: str, color_code: str) -> str:
-    """ANSI terminal color wrapper."""
-    return f"\033[{color_code}m{text}\033[0m"
-
-
-def log_packet(packet: dict, http_status: int, elapsed_ms: float):
-    """Structured console log for each transmitted packet."""
-    ts       = packet["timestamp"][11:23]  # Extract HH:MM:SS.mmm
-    temp     = packet["railTemperature"]
-    stress   = packet["stressMPa"]
-    injected = packet.get("anomalyInjected", False)
-    mode     = packet.get("anomalyMode", "NOMINAL")
-
-    if injected:
-        status_icon  = colorize("⚠  ANOMALY  ⚠", "1;31")
-        temp_str     = colorize(f"{temp:>6.2f}°C", "1;31")
-        stress_str   = colorize(f"{stress:>7.2f} MPa", "1;31")
-        mode_str     = colorize(f"[{mode}]", "1;33")
-    elif stress >= 90:
-        status_icon  = colorize("⚡  WARNING ", "1;33")
-        temp_str     = colorize(f"{temp:>6.2f}°C", "1;33")
-        stress_str   = colorize(f"{stress:>7.2f} MPa", "1;33")
-        mode_str     = colorize("[ELEVATED]", "0;33")
-    else:
-        status_icon  = colorize("✓  HEALTHY ", "0;32")
-        temp_str     = colorize(f"{temp:>6.2f}°C", "0;32")
-        stress_str   = colorize(f"{stress:>7.2f} MPa", "0;32")
-        mode_str     = colorize("[NOMINAL]", "0;32")
-
-    http_str = colorize(f"HTTP {http_status}", "0;36") if http_status == 200 else colorize(f"HTTP {http_status}", "0;31")
-    elapsed_str = colorize(f"{elapsed_ms:.0f}ms", "0;90")
+    state_str  = state_labels.get(state, "  UNKNOWN    ")
+    temp_str   = _c(f"{temp:6.2f}°C",  "1;31" if temp > 50 else "0;32")
+    stress_str = _c(f"{stress:7.2f} MPa", "1;31" if stress > 120 else "0;32")
+    http_str   = _c(f"HTTP {primary_status}", "0;36") if primary_status == 200 \
+                 else _c(f"HTTP {primary_status}", "0;31")
 
     print(
-        f"  [{ts}] {status_icon}  "
-        f"Temp: {temp_str}  Stress: {stress_str}  "
-        f"{mode_str}  {http_str} {elapsed_str}"
+        f"  [{ts}] #{packet_count:05d}  {state_str}  "
+        f"T: {temp_str}  σ: {stress_str}  "
+        f"{http_str}  {primary_elapsed:.0f}ms"
     )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN LOOP
+# ─────────────────────────────────────────────────────────────────────────────
 
 def stream_telemetry():
-    print_banner()
-    print(colorize("  Starting telemetry stream. Press Ctrl+C to stop.\n", "0;90"))
-
-    t = 0.0  # Simulated time counter (seconds)
+    sensor       = TrackStateMachine()
     packet_count = 0
     anomaly_count = 0
 
-    while True:
-        loop_start = time.time()
-
-        # Decide: healthy packet or injected anomaly?
-        if random.random() < ANOMALY_CHANCE:
-            packet = generate_critical_anomaly(t)
-            anomaly_count += 1
-        else:
-            packet = generate_healthy_reading(t)
-
-        packet_count += 1
-
-        # Transmit to Spring Boot API
-        http_status = 0
-        elapsed_ms  = 0.0
-        try:
-            send_start = time.time()
-            response   = requests.post(
-                API_ENDPOINT,
-                json=packet,
-                headers={"Content-Type": "application/json"},
-                timeout=REQUEST_TIMEOUT
-            )
-            elapsed_ms  = (time.time() - send_start) * 1000
-            http_status = response.status_code
-
-        except requests.exceptions.ConnectionError:
-            http_status = 0
-            print(colorize(
-                f"  [ERROR] Cannot reach {API_ENDPOINT} — Is Spring Boot running?",
-                "1;31"
-            ))
-        except requests.exceptions.Timeout:
-            http_status = 408
-            print(colorize("  [ERROR] Request timed out after 3 seconds.", "1;31"))
-        except Exception as ex:
-            http_status = -1
-            print(colorize(f"  [ERROR] Unexpected: {ex}", "1;31"))
-
-        log_packet(packet, http_status, elapsed_ms)
-
-        # Print rolling summary every 20 packets
-        if packet_count % 20 == 0:
-            rate = (anomaly_count / packet_count) * 100
-            print(colorize(
-                f"\n  ── Summary: {packet_count} packets sent | "
-                f"{anomaly_count} anomalies ({rate:.1f}%) ──\n",
-                "0;90"
-            ))
-
-        # Precise sleep to maintain 1-second cadence (compensate for processing time)
-        elapsed_loop = time.time() - loop_start
-        sleep_time   = max(0, INTERVAL_SECONDS - elapsed_loop)
-        time.sleep(sleep_time)
-        t += INTERVAL_SECONDS
-
-
-def send_to_endpoint(name: str, url: str, packet: dict) -> tuple:
-    """
-    POST a single telemetry packet to one endpoint.
-    Returns (http_status: int, elapsed_ms: float).
-    Errors are printed but never propagate — one target failing
-    must not interrupt delivery to the others.
-    """
-    try:
-        t0       = time.time()
-        response = requests.post(
-            url,
-            json=packet,
-            headers={"Content-Type": "application/json"},
-            timeout=REQUEST_TIMEOUT
-        )
-        elapsed_ms = (time.time() - t0) * 1000
-        return response.status_code, elapsed_ms
-
-    except requests.exceptions.ConnectionError:
-        print(colorize(
-            f"  [WARN] [{name}] unreachable — {url}",
-            "0;33"
-        ))
-        return 0, 0.0
-    except requests.exceptions.Timeout:
-        print(colorize(
-            f"  [WARN] [{name}] timed out after {REQUEST_TIMEOUT}s — {url}",
-            "0;33"
-        ))
-        return 408, 0.0
-    except Exception as ex:
-        print(colorize(f"  [ERROR] [{name}] {ex}", "1;31"))
-        return -1, 0.0
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN STREAMING LOOP
-# ─────────────────────────────────────────────────────────────────────────────
-
-def stream_telemetry():
-    print_banner()
-    print(colorize("  Starting telemetry fan-out. Press Ctrl+C to stop.\n", "0;90"))
-
-    t             = 0.0
-    packet_count  = 0
-    anomaly_count = 0
+    print_banner(sensor)
+    print(_c("  Streaming started. Press Ctrl+C to stop.\n", "0;90"))
 
     while True:
         loop_start = time.time()
 
-        # Decide: healthy packet or injected anomaly?
-        if random.random() < ANOMALY_CHANCE:
-            packet = generate_critical_anomaly(t)
-            anomaly_count += 1
-        else:
-            packet = generate_healthy_reading(t)
-
+        packet       = sensor.tick()
         packet_count += 1
+        if packet["anomalyInjected"]:
+            anomaly_count += 1
 
-        # Fan-out: dispatch to every configured target sequentially.
-        # First target drives the log line; others print warnings on failure only.
+        # Fan-out to all targets; first target drives the log line
         primary_status, primary_elapsed = 0, 0.0
         for idx, (name, url) in enumerate(TARGETS.items()):
-            status, elapsed = send_to_endpoint(name, url, packet)
-            if idx == 0:                    # Use primary (localhost) for the log
+            status, elapsed = send_with_retry(name, url, packet)
+            if idx == 0:
                 primary_status  = status
                 primary_elapsed = elapsed
 
-        log_packet(packet, primary_status, primary_elapsed)
+        log_packet(packet, primary_status, primary_elapsed,
+                   sensor.state, packet_count)
 
-        # Rolling summary every 20 packets
-        if packet_count % 20 == 0:
+        # Rolling summary every 50 packets
+        if packet_count % 50 == 0:
             rate = (anomaly_count / packet_count) * 100
-            print(colorize(
-                f"\n  ── Vajra Summary: {packet_count} packets · "
-                f"{anomaly_count} anomalies ({rate:.1f}%) · "
+            print(_c(
+                f"\n  ── Vajra Summary · {packet_count} packets · "
+                f"{anomaly_count} anomaly ticks ({rate:.2f}%) · "
                 f"{len(TARGETS)} targets ──\n",
                 "0;90"
             ))
 
-        # Maintain precise 1-second cadence
+        # Precise 1-second cadence
         elapsed_loop = time.time() - loop_start
-        sleep_time   = max(0, INTERVAL_SECONDS - elapsed_loop)
-        time.sleep(sleep_time)
-        t += INTERVAL_SECONDS
+        time.sleep(max(0, INTERVAL_SECONDS - elapsed_loop))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -343,5 +368,5 @@ if __name__ == "__main__":
     try:
         stream_telemetry()
     except KeyboardInterrupt:
-        print(colorize("\n\n  ✓ Vajra telemetry simulator stopped by operator.\n", "0;33"))
+        print(_c("\n\n  ✓ Vajra simulator stopped by operator.\n", "0;33"))
         sys.exit(0)
