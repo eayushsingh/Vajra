@@ -25,12 +25,19 @@ from datetime import datetime, timezone
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-API_ENDPOINT      = "http://localhost:8080/api/track-telemetry"
+# Fan-out targets — simulator posts to ALL of these on every tick.
+# Set a name to None to disable that target without removing it.
+TARGETS = {
+    "localhost" : "http://localhost:8080/api/track-telemetry",
+    "railway"   : "https://vajra-production.up.railway.app/api/track-telemetry",
+    "render"    : "https://vajra-app.onrender.com/api/track-telemetry",
+}
+
 SECTION_ID        = "NDLS-AGRA-SEC1"
 KM_MARKER         = 412
 INTERVAL_SECONDS  = 1.0          # Stream frequency
 ANOMALY_CHANCE    = 0.15         # 15% probability of injecting a critical event
-REQUEST_TIMEOUT   = 3            # HTTP timeout in seconds
+REQUEST_TIMEOUT   = 5            # HTTP timeout per target (seconds)
 
 # Nominal operating envelope (healthy CWR ranges for Indian summer)
 BASELINE_TEMP_C   = 32.0         # Typical ambient rail temp in °C
@@ -38,23 +45,22 @@ TEMP_FLUCTUATION  = 4.0          # ± natural thermal drift in °C
 BASELINE_STRESS   = 68.0         # MPa — within safe compressive range
 STRESS_FLUCTUATION = 12.0        # ± MPa natural variation from train load
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
 
 def print_banner():
-    banner = """
-╔══════════════════════════════════════════════════════════════╗
-║  🚆  CWR TRACK SENSOR — VIRTUAL TELEMETRY SIMULATOR         ║
-║  Section : NDLS-AGRA-SEC1  |  KM Marker : 412               ║
-║  Target  : {endpoint:<44} ║
-║  Interval: {interval}s  |  Anomaly Prob: {prob}%                       ║
-╚══════════════════════════════════════════════════════════════╝
-""".format(
-        endpoint=API_ENDPOINT,
-        interval=INTERVAL_SECONDS,
-        prob=int(ANOMALY_CHANCE * 100)
+    target_lines = "\n".join(
+        f"  │  [{name:10s}] {url}"
+        for name, url in TARGETS.items()
     )
+    banner = f"""
+╔══════════════════════════════════════════════════════════════╗
+║  🚆  VAJRA — CWR TRACK SENSOR TELEMETRY SIMULATOR          ║
+║  Section : NDLS-AGRA-SEC1  |  KM Marker : 412               ║
+║  Interval: {INTERVAL_SECONDS}s  |  Anomaly Prob : {int(ANOMALY_CHANCE * 100)}%                      ║
+║  Fan-out targets ({len(TARGETS)}):                                       ║
+{target_lines}
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+"""
     print(banner)
 
 
@@ -172,10 +178,10 @@ def log_packet(packet: dict, http_status: int, elapsed_ms: float):
         f"{mode_str}  {http_str} {elapsed_str}"
     )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN STREAMING LOOP
-# ─────────────────────────────────────────────────────────────────────────────
 
 def stream_telemetry():
     print_banner()
@@ -242,6 +248,93 @@ def stream_telemetry():
         t += INTERVAL_SECONDS
 
 
+def send_to_endpoint(name: str, url: str, packet: dict) -> tuple:
+    """
+    POST a single telemetry packet to one endpoint.
+    Returns (http_status: int, elapsed_ms: float).
+    Errors are printed but never propagate — one target failing
+    must not interrupt delivery to the others.
+    """
+    try:
+        t0       = time.time()
+        response = requests.post(
+            url,
+            json=packet,
+            headers={"Content-Type": "application/json"},
+            timeout=REQUEST_TIMEOUT
+        )
+        elapsed_ms = (time.time() - t0) * 1000
+        return response.status_code, elapsed_ms
+
+    except requests.exceptions.ConnectionError:
+        print(colorize(
+            f"  [WARN] [{name}] unreachable — {url}",
+            "0;33"
+        ))
+        return 0, 0.0
+    except requests.exceptions.Timeout:
+        print(colorize(
+            f"  [WARN] [{name}] timed out after {REQUEST_TIMEOUT}s — {url}",
+            "0;33"
+        ))
+        return 408, 0.0
+    except Exception as ex:
+        print(colorize(f"  [ERROR] [{name}] {ex}", "1;31"))
+        return -1, 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN STREAMING LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+def stream_telemetry():
+    print_banner()
+    print(colorize("  Starting telemetry fan-out. Press Ctrl+C to stop.\n", "0;90"))
+
+    t             = 0.0
+    packet_count  = 0
+    anomaly_count = 0
+
+    while True:
+        loop_start = time.time()
+
+        # Decide: healthy packet or injected anomaly?
+        if random.random() < ANOMALY_CHANCE:
+            packet = generate_critical_anomaly(t)
+            anomaly_count += 1
+        else:
+            packet = generate_healthy_reading(t)
+
+        packet_count += 1
+
+        # Fan-out: dispatch to every configured target sequentially.
+        # First target drives the log line; others print warnings on failure only.
+        primary_status, primary_elapsed = 0, 0.0
+        for idx, (name, url) in enumerate(TARGETS.items()):
+            status, elapsed = send_to_endpoint(name, url, packet)
+            if idx == 0:                    # Use primary (localhost) for the log
+                primary_status  = status
+                primary_elapsed = elapsed
+
+        log_packet(packet, primary_status, primary_elapsed)
+
+        # Rolling summary every 20 packets
+        if packet_count % 20 == 0:
+            rate = (anomaly_count / packet_count) * 100
+            print(colorize(
+                f"\n  ── Vajra Summary: {packet_count} packets · "
+                f"{anomaly_count} anomalies ({rate:.1f}%) · "
+                f"{len(TARGETS)} targets ──\n",
+                "0;90"
+            ))
+
+        # Maintain precise 1-second cadence
+        elapsed_loop = time.time() - loop_start
+        sleep_time   = max(0, INTERVAL_SECONDS - elapsed_loop)
+        time.sleep(sleep_time)
+        t += INTERVAL_SECONDS
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────────────
@@ -250,5 +343,5 @@ if __name__ == "__main__":
     try:
         stream_telemetry()
     except KeyboardInterrupt:
-        print(colorize("\n\n  ✓ Telemetry simulator stopped by operator.\n", "0;33"))
+        print(colorize("\n\n  ✓ Vajra telemetry simulator stopped by operator.\n", "0;33"))
         sys.exit(0)
