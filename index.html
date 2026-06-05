@@ -1,0 +1,1346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CWR Anomaly Engine — Indian Railways Safety Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ═══════════════════════════════════════════════════════════════
+       ROOT TOKENS & RESET
+    ═══════════════════════════════════════════════════════════════ */
+    :root {
+      --bg-void:      #020408;
+      --bg-deep:      #060c14;
+      --bg-panel:     #0a1220;
+      --bg-card:      #0d1828;
+      --bg-card-hi:   #111f35;
+      --border-dim:   #1a2d48;
+      --border-glow:  #1e4080;
+
+      --text-primary: #c8daf0;
+      --text-secondary:#7a9bbf;
+      --text-dim:     #3d5a7a;
+      --text-mono:    #a0c4e8;
+
+      /* Status palette */
+      --healthy-core: #00e5a0;
+      --healthy-glow: rgba(0, 229, 160, 0.25);
+      --healthy-dim:  rgba(0, 229, 160, 0.08);
+
+      --warning-core: #ffb700;
+      --warning-glow: rgba(255, 183, 0, 0.25);
+      --warning-dim:  rgba(255, 183, 0, 0.08);
+
+      --critical-core:#ff1a3c;
+      --critical-glow:rgba(255, 26, 60, 0.4);
+      --critical-dim: rgba(255, 26, 60, 0.1);
+      --critical-pale:#ff6680;
+
+      --accent-blue:  #3d8bff;
+      --accent-cyan:  #00cfff;
+
+      --font-display: 'Orbitron', monospace;
+      --font-ui:      'Rajdhani', sans-serif;
+      --font-mono:    'Share Tech Mono', monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg-void);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 15px;
+      overflow-x: hidden;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       GRID BACKGROUND
+    ═══════════════════════════════════════════════════════════════ */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(30, 64, 128, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(30, 64, 128, 0.07) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       LAYOUT SHELL
+    ═══════════════════════════════════════════════════════════════ */
+    .shell {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       HEADER
+    ═══════════════════════════════════════════════════════════════ */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 28px;
+      border-bottom: 1px solid var(--border-dim);
+      background: linear-gradient(180deg, rgba(6,12,20,0.98) 0%, rgba(6,12,20,0.85) 100%);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .logo-emblem {
+      width: 42px;
+      height: 42px;
+      border: 1.5px solid var(--accent-blue);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      background: rgba(61, 139, 255, 0.08);
+      box-shadow: 0 0 16px rgba(61, 139, 255, 0.2);
+    }
+
+    .header-title {
+      font-family: var(--font-display);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--text-primary);
+      line-height: 1.3;
+    }
+    .header-subtitle {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .live-indicator {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--healthy-core);
+      letter-spacing: 0.1em;
+    }
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--healthy-core);
+      box-shadow: 0 0 8px var(--healthy-core);
+      animation: pulse-dot 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--healthy-core); }
+      50%       { opacity: 0.4; box-shadow: 0 0 2px var(--healthy-core); }
+    }
+
+    .clock {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-secondary);
+      letter-spacing: 0.08em;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       MAIN CONTENT
+    ═══════════════════════════════════════════════════════════════ */
+    main {
+      padding: 24px 28px;
+      display: grid;
+      gap: 20px;
+      grid-template-columns: 1fr;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       SECTION LABEL
+    ═══════════════════════════════════════════════════════════════ */
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       EMERGENCY ALERT BANNER
+    ═══════════════════════════════════════════════════════════════ */
+    #alert-banner {
+      display: none;
+      position: relative;
+      overflow: hidden;
+      border: 1.5px solid var(--critical-core);
+      border-radius: 10px;
+      background: linear-gradient(135deg,
+        rgba(255, 26, 60, 0.12) 0%,
+        rgba(255, 26, 60, 0.04) 100%
+      );
+      padding: 18px 24px;
+      animation: banner-flash 0.6s ease-in-out infinite alternate;
+    }
+    #alert-banner.active { display: block; }
+
+    @keyframes banner-flash {
+      from { border-color: var(--critical-core); box-shadow: 0 0 20px var(--critical-glow), inset 0 0 30px rgba(255,26,60,0.05); }
+      to   { border-color: var(--critical-pale); box-shadow: 0 0 50px var(--critical-glow), inset 0 0 50px rgba(255,26,60,0.12); }
+    }
+
+    .alert-stripe {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: repeating-linear-gradient(
+        90deg,
+        var(--critical-core) 0px,
+        var(--critical-core) 20px,
+        transparent 20px,
+        transparent 30px
+      );
+      animation: stripe-scroll 0.8s linear infinite;
+    }
+    @keyframes stripe-scroll {
+      from { background-position: 0 0; }
+      to   { background-position: 30px 0; }
+    }
+
+    .alert-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .alert-icon {
+      font-size: 28px;
+      animation: icon-pulse 0.5s ease-in-out infinite alternate;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    @keyframes icon-pulse {
+      from { transform: scale(1);   filter: brightness(1); }
+      to   { transform: scale(1.15); filter: brightness(1.4); }
+    }
+
+    .alert-main h2 {
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 900;
+      color: var(--critical-core);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      text-shadow: 0 0 20px var(--critical-glow);
+    }
+
+    .alert-main .alert-sub {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--critical-pale);
+      letter-spacing: 0.1em;
+      margin-top: 4px;
+    }
+
+    .alert-badges {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    .alert-badge {
+      padding: 5px 12px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      border: 1px solid;
+    }
+    .badge-red   { color: var(--critical-core); border-color: rgba(255,26,60,0.5); background: rgba(255,26,60,0.1); }
+    .badge-amber { color: var(--warning-core);  border-color: rgba(255,183,0,0.5); background: rgba(255,183,0,0.1); }
+    .badge-blue  { color: var(--accent-cyan);   border-color: rgba(0,207,255,0.5); background: rgba(0,207,255,0.07); }
+
+    .alert-action {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 26, 60, 0.2);
+    }
+    .alert-action-text {
+      font-family: var(--font-ui);
+      font-size: 13px;
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+    .alert-action-text strong {
+      color: var(--critical-core);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      letter-spacing: 0.05em;
+    }
+    #alert-anomaly-mode {
+      font-family: var(--font-display);
+      font-size: 11px;
+      color: var(--critical-pale);
+      letter-spacing: 0.15em;
+      text-align: right;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       METRIC CARDS ROW
+    ═══════════════════════════════════════════════════════════════ */
+    .metrics-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+    }
+
+    .metric-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-dim);
+      border-radius: 10px;
+      padding: 16px 20px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--accent-blue);
+      opacity: 0.5;
+      transition: background 0.3s ease;
+    }
+
+    .metric-card.status-healthy::before  { background: var(--healthy-core); }
+    .metric-card.status-warning::before  { background: var(--warning-core); }
+    .metric-card.status-critical::before {
+      background: var(--critical-core);
+      animation: card-top-flash 0.5s ease-in-out infinite alternate;
+    }
+    @keyframes card-top-flash {
+      from { opacity: 0.7; }
+      to   { opacity: 1; box-shadow: 0 0 10px var(--critical-core); }
+    }
+
+    .metric-label {
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      letter-spacing: 0.18em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      font-family: var(--font-display);
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1;
+      transition: color 0.3s ease;
+    }
+    .metric-value.status-healthy  { color: var(--healthy-core); text-shadow: 0 0 16px var(--healthy-glow); }
+    .metric-value.status-warning  { color: var(--warning-core); text-shadow: 0 0 16px var(--warning-glow); }
+    .metric-value.status-critical {
+      color: var(--critical-core);
+      text-shadow: 0 0 20px var(--critical-glow);
+      animation: value-flash 0.4s ease-in-out infinite alternate;
+    }
+    @keyframes value-flash {
+      from { opacity: 0.8; }
+      to   { opacity: 1;   }
+    }
+
+    .metric-unit {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      letter-spacing: 0.1em;
+    }
+
+    .metric-trend {
+      position: absolute;
+      bottom: 12px;
+      right: 16px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       TRACK MAP
+    ═══════════════════════════════════════════════════════════════ */
+    .track-map-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-dim);
+      border-radius: 10px;
+      padding: 20px 24px;
+      overflow: hidden;
+    }
+
+    .track-map-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .track-map-title {
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+    }
+
+    .km-badge {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--accent-cyan);
+      border: 1px solid rgba(0,207,255,0.3);
+      padding: 3px 10px;
+      border-radius: 20px;
+      background: rgba(0,207,255,0.06);
+    }
+
+    /* The track SVG */
+    .track-svg-wrapper {
+      width: 100%;
+      overflow: visible;
+    }
+
+    /* Station labels */
+    .station-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      fill: var(--text-secondary);
+      letter-spacing: 0.06em;
+    }
+    .station-code {
+      font-family: var(--font-display);
+      font-size: 12px;
+      font-weight: 700;
+      fill: var(--text-primary);
+      letter-spacing: 0.08em;
+    }
+    .km-marker-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      fill: var(--text-dim);
+    }
+
+    /* Track segments — SVG lines styled via CSS */
+    .track-seg {
+      stroke-linecap: round;
+      stroke-width: 5;
+      transition: stroke 0.3s ease, filter 0.3s ease;
+    }
+    .track-seg.healthy {
+      stroke: var(--healthy-core);
+      filter: drop-shadow(0 0 4px var(--healthy-core));
+    }
+    .track-seg.warning {
+      stroke: var(--warning-core);
+      filter: drop-shadow(0 0 6px var(--warning-core));
+    }
+    .track-seg.critical {
+      stroke: var(--critical-core);
+      filter: drop-shadow(0 0 12px var(--critical-core));
+      animation: track-crimson-pulse 0.4s ease-in-out infinite alternate;
+    }
+    .track-seg.awaiting {
+      stroke: var(--border-glow);
+      filter: none;
+    }
+    @keyframes track-crimson-pulse {
+      from { stroke: var(--critical-core); filter: drop-shadow(0 0 8px var(--critical-core)); }
+      to   { stroke: #ff6680; filter: drop-shadow(0 0 24px rgba(255,26,60,0.9)); }
+    }
+
+    /* Sensor node dot */
+    .sensor-dot {
+      transition: fill 0.3s ease, r 0.3s ease;
+    }
+    .sensor-dot.healthy  { fill: var(--healthy-core); }
+    .sensor-dot.warning  { fill: var(--warning-core); }
+    .sensor-dot.critical { fill: var(--critical-core); animation: sensor-burst 0.4s ease-in-out infinite alternate; }
+    .sensor-dot.awaiting { fill: var(--border-glow); }
+    @keyframes sensor-burst {
+      from { r: 7; }
+      to   { r: 11; filter: drop-shadow(0 0 8px var(--critical-core)); }
+    }
+
+    /* Pulse ring around sensor on critical */
+    .sensor-ring {
+      fill: none;
+      stroke-width: 2;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .sensor-ring.critical {
+      stroke: var(--critical-core);
+      opacity: 1;
+      animation: ring-expand 0.8s ease-out infinite;
+    }
+    @keyframes ring-expand {
+      from { r: 10; opacity: 0.8; }
+      to   { r: 28; opacity: 0; }
+    }
+
+    /* Train position dot */
+    .train-dot {
+      fill: var(--accent-cyan);
+      filter: drop-shadow(0 0 4px var(--accent-cyan));
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       SEGMENT STATUS LIST
+    ═══════════════════════════════════════════════════════════════ */
+    .segments-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-dim);
+      border-radius: 10px;
+      padding: 20px 24px;
+    }
+
+    .segment-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(26, 45, 72, 0.6);
+    }
+    .segment-row:last-child { border-bottom: none; }
+
+    .segment-info { display: flex; align-items: center; gap: 12px; }
+
+    .seg-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .seg-dot.healthy  { background: var(--healthy-core); box-shadow: 0 0 6px var(--healthy-core); }
+    .seg-dot.warning  { background: var(--warning-core); box-shadow: 0 0 6px var(--warning-core); }
+    .seg-dot.critical { background: var(--critical-core); box-shadow: 0 0 10px var(--critical-core); animation: seg-dot-blink 0.5s ease-in-out infinite alternate; }
+    .seg-dot.awaiting { background: var(--border-glow); }
+    @keyframes seg-dot-blink { from { opacity: 0.5; } to { opacity: 1; } }
+
+    .seg-name {
+      font-family: var(--font-ui);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: 0.02em;
+    }
+    .seg-km {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      letter-spacing: 0.08em;
+    }
+
+    .seg-status-pill {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid;
+      text-transform: uppercase;
+    }
+    .pill-healthy  { color: var(--healthy-core); border-color: rgba(0,229,160,0.4); background: rgba(0,229,160,0.07); }
+    .pill-warning  { color: var(--warning-core); border-color: rgba(255,183,0,0.4); background: rgba(255,183,0,0.07); }
+    .pill-critical { color: var(--critical-core); border-color: rgba(255,26,60,0.5); background: rgba(255,26,60,0.1); animation: pill-flash 0.5s ease-in-out infinite alternate; }
+    .pill-awaiting { color: var(--text-dim); border-color: var(--border-dim); background: transparent; }
+    @keyframes pill-flash { from { opacity: 0.7; } to { opacity: 1; } }
+
+    .seg-metrics {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      text-align: right;
+      letter-spacing: 0.05em;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       TELEMETRY LOG TABLE
+    ═══════════════════════════════════════════════════════════════ */
+    .log-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-dim);
+      border-radius: 10px;
+      padding: 20px 24px;
+    }
+
+    .log-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .log-table th {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      text-align: left;
+      padding: 0 10px 10px 0;
+      border-bottom: 1px solid var(--border-dim);
+    }
+    .log-table td {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      padding: 8px 10px 8px 0;
+      border-bottom: 1px solid rgba(26,45,72,0.4);
+      vertical-align: middle;
+    }
+    .log-table tbody tr:last-child td { border-bottom: none; }
+    .log-table tbody tr:hover td { background: rgba(61,139,255,0.03); }
+
+    .log-ts { color: var(--text-dim); font-size: 10px; }
+    .log-val-healthy  { color: var(--healthy-core); }
+    .log-val-warning  { color: var(--warning-core); }
+    .log-val-critical { color: var(--critical-core); font-weight: 600; }
+
+    .log-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .log-badge.healthy  { background: rgba(0,229,160,0.1); color: var(--healthy-core); }
+    .log-badge.warning  { background: rgba(255,183,0,0.1); color: var(--warning-core); }
+    .log-badge.critical { background: rgba(255,26,60,0.12); color: var(--critical-core); }
+
+    /* ═══════════════════════════════════════════════════════════════
+       STATS BAR
+    ═══════════════════════════════════════════════════════════════ */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+    }
+
+    .stat-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-dim);
+      border-radius: 8px;
+      padding: 14px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .stat-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+    .stat-value {
+      font-family: var(--font-display);
+      font-size: 22px;
+      color: var(--text-primary);
+    }
+    .stat-value.accent { color: var(--accent-cyan); }
+    .stat-value.warn   { color: var(--warning-core); }
+    .stat-value.danger { color: var(--critical-core); }
+
+    /* ═══════════════════════════════════════════════════════════════
+       FOOTER
+    ═══════════════════════════════════════════════════════════════ */
+    footer {
+      padding: 12px 28px;
+      border-top: 1px solid var(--border-dim);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .footer-text {
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      letter-spacing: 0.14em;
+      color: var(--text-dim);
+    }
+    .footer-text span { color: var(--accent-blue); }
+    .poll-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      color: var(--text-dim);
+      letter-spacing: 0.1em;
+    }
+    .poll-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-blue);
+    }
+    .poll-dot.active {
+      animation: poll-blink 0.2s ease-in-out;
+    }
+    @keyframes poll-blink {
+      0%   { background: var(--accent-cyan); box-shadow: 0 0 6px var(--accent-cyan); }
+      100% { background: var(--accent-blue); box-shadow: none; }
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       AWAITING STATE OVERLAY
+    ═══════════════════════════════════════════════════════════════ */
+    #awaiting-overlay {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 50px 20px;
+      text-align: center;
+    }
+    .awaiting-icon { font-size: 40px; animation: slow-pulse 2s ease-in-out infinite; }
+    @keyframes slow-pulse {
+      0%, 100% { opacity: 0.4; transform: scale(0.95); }
+      50%       { opacity: 0.9; transform: scale(1.05); }
+    }
+    .awaiting-title {
+      font-family: var(--font-display);
+      font-size: 14px;
+      letter-spacing: 0.2em;
+      color: var(--text-dim);
+    }
+    .awaiting-sub {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      letter-spacing: 0.1em;
+    }
+
+    /* Two-column layout for larger screens */
+    @media (min-width: 900px) {
+      main {
+        grid-template-columns: 1fr 1fr;
+      }
+      .track-map-panel { grid-column: 1 / -1; }
+      .log-panel       { grid-column: 1 / -1; }
+      #alert-banner    { grid-column: 1 / -1; }
+      .stats-row-wrap  { grid-column: 1 / -1; }
+    }
+  </style>
+</head>
+
+<body>
+<div class="shell">
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       HEADER
+  ═══════════════════════════════════════════════════════════════ -->
+  <header>
+    <div class="header-left">
+      <div class="logo-emblem">🛤</div>
+      <div>
+        <div class="header-title">CWR ANOMALY DETECTION ENGINE</div>
+        <div class="header-subtitle">Indian Railways · RailTech Policy 2026 · RDSO Prototype</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="live-indicator">
+        <div class="live-dot"></div>
+        <span>LIVE STREAM</span>
+      </div>
+      <div class="clock" id="clock">00:00:00</div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       MAIN
+  ═══════════════════════════════════════════════════════════════ -->
+  <main>
+
+    <!-- EMERGENCY ALERT BANNER -->
+    <div id="alert-banner" role="alert" aria-live="assertive">
+      <div class="alert-stripe"></div>
+      <div class="alert-top">
+        <div class="alert-icon">⚠</div>
+        <div class="alert-main">
+          <h2>EMERGENCY BRAKE COMMAND ISSUED</h2>
+          <div class="alert-sub" id="alert-subtitle">
+            CRITICAL STRUCTURAL THRESHOLD BREACHED · NDLS-AGRA-SEC1 · KM 412
+          </div>
+          <div class="alert-badges">
+            <span class="alert-badge badge-red" id="alert-stress-badge">STRESS: — MPa</span>
+            <span class="alert-badge badge-red" id="alert-temp-badge">TEMP: — °C</span>
+            <span class="alert-badge badge-amber">DISPATCH P-WAY GANG TO KM 412</span>
+            <span class="alert-badge badge-blue" id="alert-time-badge">DETECTED: —</span>
+          </div>
+        </div>
+        <div id="alert-anomaly-mode">—</div>
+      </div>
+      <div class="alert-action">
+        <div class="alert-action-text">
+          Prescribed Action: <strong>HALT ALL TRAINS ON NDLS-AGRA-SEC1</strong>
+          · Initiate emergency inspection at kilometer marker 412.
+        </div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--critical-pale);letter-spacing:0.08em;" id="alert-packets"></div>
+      </div>
+    </div>
+
+    <!-- METRIC CARDS -->
+    <div class="metrics-row" style="grid-column:1/-1">
+
+      <div class="metric-card" id="card-stress">
+        <div class="metric-label">Rail Stress</div>
+        <div class="metric-value" id="val-stress">—</div>
+        <div class="metric-unit">MegaPascals (MPa)</div>
+        <div class="metric-trend" id="trend-stress">—</div>
+      </div>
+
+      <div class="metric-card" id="card-temp">
+        <div class="metric-label">Rail Temperature</div>
+        <div class="metric-value" id="val-temp">—</div>
+        <div class="metric-unit">Degrees Celsius (°C)</div>
+        <div class="metric-trend" id="trend-temp">—</div>
+      </div>
+
+      <div class="metric-card" id="card-risk">
+        <div class="metric-label">Risk Classification</div>
+        <div class="metric-value" id="val-risk" style="font-size:16px;padding-top:6px;">AWAITING</div>
+        <div class="metric-unit" id="val-action" style="font-size:10px;line-height:1.5;margin-top:6px;">Awaiting first telemetry packet…</div>
+      </div>
+
+      <div class="metric-card" id="card-section">
+        <div class="metric-label">Active Section</div>
+        <div class="metric-value" style="font-size:15px;padding-top:6px;color:var(--accent-cyan)">NDLS-AGRA-SEC1</div>
+        <div class="metric-unit">Kilometer Marker <strong id="val-km" style="color:var(--text-primary)">412</strong></div>
+        <div class="metric-trend" id="val-timestamp">—</div>
+      </div>
+
+    </div>
+
+    <!-- TRACK MAP -->
+    <div class="track-map-panel">
+      <div class="track-map-header">
+        <div class="track-map-title">Route Topology — New Delhi → Agra Cantonment</div>
+        <div class="km-badge">📍 Active Sensor: KM 412</div>
+      </div>
+
+      <div class="track-svg-wrapper">
+        <svg id="track-svg" viewBox="0 0 860 160" xmlns="http://www.w3.org/2000/svg" style="width:100%; height:auto;">
+
+          <!-- Background rail bed -->
+          <line x1="60" y1="80" x2="800" y2="80" stroke="#0d1e33" stroke-width="16" stroke-linecap="round"/>
+
+          <!-- Sleeper marks -->
+          <g stroke="#1a2d48" stroke-width="2" stroke-linecap="round">
+            <line x1="80"  y1="68" x2="80"  y2="92"/>
+            <line x1="120" y1="68" x2="120" y2="92"/>
+            <line x1="160" y1="68" x2="160" y2="92"/>
+            <line x1="200" y1="68" x2="200" y2="92"/>
+            <line x1="240" y1="68" x2="240" y2="92"/>
+            <line x1="280" y1="68" x2="280" y2="92"/>
+            <line x1="320" y1="68" x2="320" y2="92"/>
+            <line x1="360" y1="68" x2="360" y2="92"/>
+            <line x1="400" y1="68" x2="400" y2="92"/>
+            <line x1="440" y1="68" x2="440" y2="92"/>
+            <line x1="480" y1="68" x2="480" y2="92"/>
+            <line x1="520" y1="68" x2="520" y2="92"/>
+            <line x1="560" y1="68" x2="560" y2="92"/>
+            <line x1="600" y1="68" x2="600" y2="92"/>
+            <line x1="640" y1="68" x2="640" y2="92"/>
+            <line x1="680" y1="68" x2="680" y2="92"/>
+            <line x1="720" y1="68" x2="720" y2="92"/>
+            <line x1="760" y1="68" x2="760" y2="92"/>
+          </g>
+
+          <!-- ── Track Segments ── -->
+          <!-- Seg A: NDLS → Faridabad  (60→200) -->
+          <line id="seg-a" class="track-seg awaiting" x1="65" y1="80" x2="205" y2="80"/>
+          <!-- Seg B: Faridabad → Mathura (200→430) -->
+          <line id="seg-b" class="track-seg awaiting" x1="205" y1="80" x2="435" y2="80"/>
+          <!-- Seg C: Mathura → KM 412 SENSOR (430→530) — MONITORED -->
+          <line id="seg-c" class="track-seg awaiting" x1="435" y1="80" x2="535" y2="80"/>
+          <!-- Seg D: KM 412 → Agra Cantt (530→800) -->
+          <line id="seg-d" class="track-seg awaiting" x1="535" y1="80" x2="795" y2="80"/>
+
+          <!-- ── Station Nodes ── -->
+          <!-- NDLS -->
+          <circle cx="65" cy="80" r="6" fill="#0d1828" stroke="#3d8bff" stroke-width="2"/>
+          <text x="65" y="58" class="station-code" text-anchor="middle">NDLS</text>
+          <text x="65" y="70" class="station-label" text-anchor="middle">New Delhi</text>
+          <text x="65" y="103" class="km-marker-label" text-anchor="middle">KM 0</text>
+
+          <!-- Faridabad -->
+          <circle cx="205" cy="80" r="5" fill="#0d1828" stroke="#3d8bff" stroke-width="1.5"/>
+          <text x="205" y="60" class="station-label" text-anchor="middle" font-size="9">Faridabad</text>
+          <text x="205" y="103" class="km-marker-label" text-anchor="middle">KM 128</text>
+
+          <!-- Mathura -->
+          <circle cx="435" cy="80" r="5" fill="#0d1828" stroke="#3d8bff" stroke-width="1.5"/>
+          <text x="435" y="60" class="station-label" text-anchor="middle" font-size="9">Mathura Jn</text>
+          <text x="435" y="103" class="km-marker-label" text-anchor="middle">KM 372</text>
+
+          <!-- ── SENSOR POINT KM 412 ── -->
+          <circle class="sensor-ring" id="sensor-ring" cx="535" cy="80" r="10"/>
+          <circle class="sensor-dot awaiting" id="sensor-dot" cx="535" cy="80" r="7"/>
+          <!-- Sensor Label -->
+          <text x="535" y="56" class="km-marker-label" text-anchor="middle" fill="#7a9bbf" font-size="9.5" letter-spacing="0.05em">SENSOR</text>
+          <text x="535" y="46" class="km-marker-label" text-anchor="middle" fill="#3d8bff" font-size="9" letter-spacing="0.08em">KM 412</text>
+          <!-- Tick line from sensor -->
+          <line x1="535" y1="90" x2="535" y2="98" stroke="#3d8bff" stroke-width="1" stroke-dasharray="2,2"/>
+
+          <!-- Agra Cantt -->
+          <circle cx="795" cy="80" r="6" fill="#0d1828" stroke="#3d8bff" stroke-width="2"/>
+          <text x="795" y="58" class="station-code" text-anchor="middle">AGC</text>
+          <text x="795" y="70" class="station-label" text-anchor="middle">Agra Cantt</text>
+          <text x="795" y="103" class="km-marker-label" text-anchor="middle">KM 526</text>
+
+          <!-- ── Animated Train ── -->
+          <circle id="train-dot" class="train-dot" cx="100" cy="80" r="5">
+            <animate id="train-anim" attributeName="cx" from="65" to="795" dur="14s" repeatCount="indefinite" begin="0s"/>
+          </circle>
+
+          <!-- Legend -->
+          <g transform="translate(0, 130)">
+            <circle cx="70" cy="14" r="5" fill="#00e5a0"/>
+            <text x="82" y="18" fill="#7a9bbf" font-size="9" font-family="'Share Tech Mono', monospace" letter-spacing="0.06em">HEALTHY</text>
+            <circle cx="160" cy="14" r="5" fill="#ffb700"/>
+            <text x="172" y="18" fill="#7a9bbf" font-size="9" font-family="'Share Tech Mono', monospace" letter-spacing="0.06em">WARNING</text>
+            <circle cx="252" cy="14" r="5" fill="#ff1a3c"/>
+            <text x="264" y="18" fill="#7a9bbf" font-size="9" font-family="'Share Tech Mono', monospace" letter-spacing="0.06em">CRITICAL</text>
+            <circle cx="342" cy="14" r="5" fill="#00cfff"/>
+            <text x="354" y="18" fill="#7a9bbf" font-size="9" font-family="'Share Tech Mono', monospace" letter-spacing="0.06em">VANDE BHARAT TRAIN</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <!-- SEGMENT STATUS TABLE -->
+    <div class="segments-panel">
+      <div class="section-label">Segment Status — NDLS to AGC Corridor</div>
+
+      <div class="segment-row">
+        <div class="segment-info">
+          <div class="seg-dot healthy" id="seg-dot-a"></div>
+          <div>
+            <div class="seg-name">New Delhi → Faridabad</div>
+            <div class="seg-km">KM 0 – KM 128 · SEC-A</div>
+          </div>
+        </div>
+        <div class="seg-metrics">—</div>
+        <div class="seg-status-pill pill-healthy">Healthy</div>
+      </div>
+
+      <div class="segment-row">
+        <div class="segment-info">
+          <div class="seg-dot healthy" id="seg-dot-b"></div>
+          <div>
+            <div class="seg-name">Faridabad → Mathura Jn</div>
+            <div class="seg-km">KM 128 – KM 372 · SEC-B</div>
+          </div>
+        </div>
+        <div class="seg-metrics">—</div>
+        <div class="seg-status-pill pill-healthy">Healthy</div>
+      </div>
+
+      <div class="segment-row" id="seg-row-c">
+        <div class="segment-info">
+          <div class="seg-dot awaiting" id="seg-dot-c"></div>
+          <div>
+            <div class="seg-name">Mathura Jn → KM 412 ⟵ <em style="color:var(--accent-cyan);font-size:11px;">ACTIVE SENSOR</em></div>
+            <div class="seg-km">KM 372 – KM 412 · SEC-C (MONITORED)</div>
+          </div>
+        </div>
+        <div class="seg-metrics" id="seg-c-metrics">—</div>
+        <div class="seg-status-pill pill-awaiting" id="seg-c-pill">Awaiting</div>
+      </div>
+
+      <div class="segment-row">
+        <div class="segment-info">
+          <div class="seg-dot healthy" id="seg-dot-d"></div>
+          <div>
+            <div class="seg-name">KM 412 → Agra Cantonment</div>
+            <div class="seg-km">KM 412 – KM 526 · SEC-D</div>
+          </div>
+        </div>
+        <div class="seg-metrics">—</div>
+        <div class="seg-status-pill pill-healthy">Healthy</div>
+      </div>
+
+    </div>
+
+    <!-- STATS ROW -->
+    <div class="stats-row-wrap" style="grid-column:1/-1">
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">Packets Processed</div>
+          <div class="stat-value accent" id="stat-packets">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Anomalies Detected</div>
+          <div class="stat-value danger" id="stat-anomalies">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Anomaly Rate</div>
+          <div class="stat-value warn" id="stat-rate">—%</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Poll Latency</div>
+          <div class="stat-value" id="stat-latency">— ms</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Last Evaluated</div>
+          <div class="stat-value" id="stat-eval" style="font-size:14px;color:var(--text-secondary)">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TELEMETRY LOG -->
+    <div class="log-panel">
+      <div class="section-label">Recent Telemetry Log (last 10 packets)</div>
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Stress (MPa)</th>
+            <th>Temp (°C)</th>
+            <th>Classification</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+          <tr>
+            <td colspan="5" style="color:var(--text-dim);font-size:11px;text-align:center;padding:24px 0;letter-spacing:0.1em;">
+              Waiting for first telemetry packet from simulator…
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       FOOTER
+  ═══════════════════════════════════════════════════════════════ -->
+  <footer>
+    <div class="footer-text">
+      CWR Anomaly Engine · <span>RailTech Policy 2026</span> Prototype ·
+      RDSO Guidelines IS:3443 / UIC 60 ·
+      Ministry of Railways, Government of India
+    </div>
+    <div class="poll-indicator">
+      <div class="poll-dot" id="poll-dot"></div>
+      <span>POLLING /api/track-status @ 800ms</span>
+    </div>
+  </footer>
+
+</div><!-- /.shell -->
+
+<!-- ═══════════════════════════════════════════════════════════════
+     JAVASCRIPT — POLLING ENGINE & DOM ORCHESTRATION
+═══════════════════════════════════════════════════════════════ -->
+<script>
+  /* ─────────────────────────────────────────────────────────────────
+     CONSTANTS
+  ───────────────────────────────────────────────────────────────── */
+  const POLL_INTERVAL_MS  = 800;
+  const STATUS_ENDPOINT   = '/api/track-status';
+  const MAX_LOG_ROWS      = 10;
+
+  /* ─────────────────────────────────────────────────────────────────
+     STATE
+  ───────────────────────────────────────────────────────────────── */
+  let lastStress     = null;
+  let lastTemp       = null;
+  let currentRisk    = 'AWAITING';
+  let logRows        = [];    // ring buffer of last N log entries
+
+  /* ─────────────────────────────────────────────────────────────────
+     CLOCK
+  ───────────────────────────────────────────────────────────────── */
+  function updateClock() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      now.toTimeString().slice(0, 8);
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  /* ─────────────────────────────────────────────────────────────────
+     TRACK STATE MAPPER
+     Maps riskLevel string → CSS class tokens
+  ───────────────────────────────────────────────────────────────── */
+  function getRiskClass(risk) {
+    switch (risk) {
+      case 'CRITICAL': return 'critical';
+      case 'WARNING':  return 'warning';
+      case 'HEALTHY':  return 'healthy';
+      default:         return 'awaiting';
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     APPLY TRACK STATUS
+     Core function that wires a status response to every DOM element
+  ───────────────────────────────────────────────────────────────── */
+  function applyStatus(s) {
+    const cls = getRiskClass(s.riskLevel);
+
+    /* ── Metric Cards ─────────────────────────────────────────── */
+    const stressEl = document.getElementById('val-stress');
+    const tempEl   = document.getElementById('val-temp');
+    const riskEl   = document.getElementById('val-risk');
+    const actionEl = document.getElementById('val-action');
+    const tsEl     = document.getElementById('val-timestamp');
+
+    stressEl.textContent = s.stressMPa.toFixed(1);
+    tempEl.textContent   = s.railTemperature.toFixed(1);
+    riskEl.textContent   = s.statusLabel || s.riskLevel;
+    actionEl.textContent = s.action;
+
+    // Truncate long action text
+    if (s.action && s.action.length > 80) {
+      actionEl.textContent = s.action.substring(0, 78) + '…';
+    }
+
+    // Timestamp from packet
+    if (s.lastUpdated) {
+      const t = new Date(s.lastUpdated);
+      tsEl.textContent = 'Last packet: ' + t.toTimeString().slice(0, 8) + ' UTC';
+    }
+
+    // Apply color classes to values
+    ['val-stress', 'val-temp', 'val-risk'].forEach(id => {
+      const el = document.getElementById(id);
+      el.className = 'metric-value ' + (id === 'val-risk' ? '' : 'status-' + cls);
+      if (id === 'val-risk') {
+        el.style.color = cls === 'critical' ? 'var(--critical-core)'
+                       : cls === 'warning'  ? 'var(--warning-core)'
+                       : cls === 'healthy'  ? 'var(--healthy-core)'
+                       : 'var(--text-dim)';
+        el.style.fontSize = '16px';
+        el.style.paddingTop = '6px';
+      }
+    });
+
+    // Card top-border class
+    ['card-stress', 'card-temp', 'card-risk'].forEach(id => {
+      const el = document.getElementById(id);
+      el.className = 'metric-card status-' + cls;
+    });
+
+    /* ── Trend Arrows ─────────────────────────────────────────── */
+    if (lastStress !== null) {
+      const delta = s.stressMPa - lastStress;
+      document.getElementById('trend-stress').textContent =
+        delta > 0 ? `▲ +${delta.toFixed(1)}` : `▼ ${delta.toFixed(1)}`;
+    }
+    if (lastTemp !== null) {
+      const delta = s.railTemperature - lastTemp;
+      document.getElementById('trend-temp').textContent =
+        delta > 0 ? `▲ +${delta.toFixed(1)}` : `▼ ${delta.toFixed(1)}`;
+    }
+    lastStress = s.stressMPa;
+    lastTemp   = s.railTemperature;
+
+    /* ── Track SVG Segments ──────────────────────────────────── */
+    // Segment C & sensor node reflect the live reading
+    const segC      = document.getElementById('seg-c');
+    const sensorDot = document.getElementById('sensor-dot');
+    const sensorRing = document.getElementById('sensor-ring');
+
+    segC.className      = 'track-seg ' + cls;
+    sensorDot.className = 'sensor-dot ' + cls;
+    sensorRing.className = 'sensor-ring ' + cls;
+
+    // Segments A, B, D remain healthy (no sensors)
+    ['seg-a','seg-b','seg-d'].forEach(id => {
+      document.getElementById(id).className = 'track-seg healthy';
+    });
+
+    /* ── Segment Status Row ───────────────────────────────────── */
+    const segDotC   = document.getElementById('seg-dot-c');
+    const segCMetrics = document.getElementById('seg-c-metrics');
+    const segCPill  = document.getElementById('seg-c-pill');
+
+    segDotC.className = 'seg-dot ' + cls;
+    segCMetrics.textContent = `${s.stressMPa.toFixed(1)} MPa · ${s.railTemperature.toFixed(1)}°C`;
+
+    const pillCls = 'seg-status-pill ' +
+      (cls === 'critical' ? 'pill-critical' :
+       cls === 'warning'  ? 'pill-warning'  :
+       cls === 'healthy'  ? 'pill-healthy'  : 'pill-awaiting');
+    segCPill.className = pillCls;
+    segCPill.textContent =
+      cls === 'critical' ? 'CRITICAL' :
+      cls === 'warning'  ? 'WARNING'  :
+      cls === 'healthy'  ? 'Healthy'  : 'Awaiting';
+
+    /* ── Emergency Alert Banner ──────────────────────────────── */
+    const banner = document.getElementById('alert-banner');
+    if (s.riskLevel === 'CRITICAL') {
+      banner.classList.add('active');
+      document.getElementById('alert-stress-badge').textContent =
+        `STRESS: ${s.stressMPa.toFixed(1)} MPa`;
+      document.getElementById('alert-temp-badge').textContent =
+        `TEMP: ${s.railTemperature.toFixed(1)}°C`;
+      const now = new Date();
+      document.getElementById('alert-time-badge').textContent =
+        `DETECTED: ${now.toTimeString().slice(0, 8)}`;
+      document.getElementById('alert-anomaly-mode').textContent =
+        s.anomalyMode || 'THRESHOLD BREACH';
+      document.getElementById('alert-packets').textContent =
+        `Packet #${s.totalPacketsProcessed} of ${s.totalPacketsProcessed}`;
+    } else {
+      banner.classList.remove('active');
+    }
+
+    /* ── Stats Row ────────────────────────────────────────────── */
+    document.getElementById('stat-packets').textContent =
+      s.totalPacketsProcessed.toLocaleString();
+    document.getElementById('stat-anomalies').textContent =
+      s.totalAnomaliesDetected.toLocaleString();
+
+    if (s.totalPacketsProcessed > 0) {
+      const rate = (s.totalAnomaliesDetected / s.totalPacketsProcessed * 100).toFixed(1);
+      document.getElementById('stat-rate').textContent = rate + '%';
+    }
+
+    if (s.evaluatedAt) {
+      const t = new Date(s.evaluatedAt);
+      document.getElementById('stat-eval').textContent = t.toTimeString().slice(0, 8);
+    }
+
+    /* ── Telemetry Log ────────────────────────────────────────── */
+    const now = new Date();
+    logRows.unshift({
+      ts:     now.toTimeString().slice(0, 8),
+      stress: s.stressMPa,
+      temp:   s.railTemperature,
+      risk:   s.riskLevel,
+      action: s.action
+    });
+    if (logRows.length > MAX_LOG_ROWS) logRows.pop();
+    renderLog();
+
+    currentRisk = s.riskLevel;
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     RENDER LOG TABLE
+  ───────────────────────────────────────────────────────────────── */
+  function renderLog() {
+    const tbody = document.getElementById('log-body');
+    if (logRows.length === 0) return;
+
+    tbody.innerHTML = logRows.map(r => {
+      const cls    = getRiskClass(r.risk);
+      const valCls = `log-val-${cls}`;
+      const badge  = `<span class="log-badge ${cls}">${r.risk}</span>`;
+      const shortAction = r.action.length > 55
+        ? r.action.substring(0, 53) + '…'
+        : r.action;
+      return `
+        <tr>
+          <td class="log-ts">${r.ts}</td>
+          <td class="${valCls}">${r.stress.toFixed(2)}</td>
+          <td class="${valCls}">${r.temp.toFixed(2)}</td>
+          <td>${badge}</td>
+          <td style="font-size:10.5px;color:var(--text-dim);max-width:240px;">${shortAction}</td>
+        </tr>`;
+    }).join('');
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     POLLING ENGINE
+     Hits GET /api/track-status every 800ms
+     Blinks the poll indicator dot on each request
+  ───────────────────────────────────────────────────────────────── */
+  async function poll() {
+    const dot = document.getElementById('poll-dot');
+    const t0  = performance.now();
+
+    // Flash the poll indicator
+    dot.classList.add('active');
+    setTimeout(() => dot.classList.remove('active'), 180);
+
+    try {
+      const resp = await fetch(STATUS_ENDPOINT, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        cache:  'no-store'
+      });
+
+      const latency = Math.round(performance.now() - t0);
+      document.getElementById('stat-latency').textContent = latency + ' ms';
+
+      if (resp.status === 204) {
+        // No data yet — Spring Boot returned 204 No Content
+        return;
+      }
+
+      if (!resp.ok) {
+        console.warn('[Dashboard] API returned', resp.status);
+        return;
+      }
+
+      const data = await resp.json();
+      applyStatus(data);
+
+    } catch (err) {
+      // Network error (Spring Boot not running)
+      console.error('[Dashboard] Poll failed:', err.message);
+      document.getElementById('stat-latency').textContent = 'ERR';
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     BOOTSTRAP
+  ───────────────────────────────────────────────────────────────── */
+  // Kick off first poll immediately, then repeat
+  poll();
+  setInterval(poll, POLL_INTERVAL_MS);
+</script>
+</body>
+</html>

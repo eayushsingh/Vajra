@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vajra — CWR Anomaly Detection Engine · Indian Railways · RDSO</title>
+  <meta name="description" content="Real-time predictive anomaly detection for Continuous Welded Rail stress management. Indian Railways RDSO prototype — RailTech Policy 2026." />
+
+  <!-- Typography: Inter (UI) + JetBrains Mono (data values) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* ── Semantic status classes ────────────────────────────────────────── */
+
+    /* Flat status chips — no borders, pure tonal fill */
+    .badge-healthy  { background-color: #ecfdf5; color: #059669; }
+    .badge-warning  { background-color: #fffbeb; color: #92400e; }
+    .badge-critical { background-color: #fef2f2; color: #dc2626; }
+    .badge-awaiting { background-color: #f8fafc; color: #94a3b8; }
+
+    /* Indicator dots */
+    .dot-healthy  { background-color: #059669; }
+    .dot-warning  { background-color: #92400e; }
+    .dot-critical { background-color: #dc2626; }
+    .dot-awaiting { background-color: #94a3b8; }
+
+    /* Primary value text colors */
+    .val-healthy  { color: #059669; }
+    .val-warning  { color: #92400e; }
+    .val-critical { color: #dc2626; }
+    .val-neutral  { color: #0f172a; }
+
+    /* KPI card left accent border (4px, status-driven) */
+    .accent-healthy  { border-left-color: #059669 !important; }
+    .accent-warning  { border-left-color: #92400e !important; }
+    .accent-critical { border-left-color: #dc2626 !important; }
+    .accent-neutral  { border-left-color: #e2e8f0 !important; }
+
+    /* Threshold micro-bars */
+    .bar-healthy  { background-color: #059669; }
+    .bar-warning  { background-color: #92400e; }
+    .bar-critical { background-color: #dc2626; }
+
+    /* SVG track segments — stroke is set in JS via setAttribute */
+    /* Sensor fill dot */
+    .sensor-healthy  { fill: #059669; }
+    .sensor-warning  { fill: #92400e; }
+    .sensor-critical { fill: #dc2626; }
+    .sensor-awaiting { fill: #94a3b8; }
+
+    /* Log table row hover */
+    tr.log-row:hover td { background-color: #f8fafc; }
+
+    /* Line clamp for action text */
+    .clamp-2 {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    /* Smooth bar transition */
+    .micro-bar { transition: width 400ms ease, background-color 300ms ease; }
+  </style>
+</head>
+
+<body class="min-h-screen bg-slate-50 font-sans antialiased text-slate-900">
+
+  <!-- ════════════════════════════════════════════════════════════
+       HEADER — Minimal, institutional
+  ════════════════════════════════════════════════════════════ -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+    <div class="max-w-screen-2xl mx-auto px-6" style="height:52px; display:flex; align-items:center; justify-content:space-between;">
+
+      <!-- Identity mark -->
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="width:28px; height:28px; border:1.5px solid #0f172a; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+          <svg viewBox="0 0 16 16" fill="none" style="width:14px; height:14px;" xmlns="http://www.w3.org/2000/svg">
+            <line x1="2" y1="8" x2="14" y2="8" stroke="#0f172a" stroke-width="1.5"/>
+            <line x1="4.5" y1="4.5" x2="4.5" y2="11.5" stroke="#0f172a" stroke-width="1.5"/>
+            <line x1="8" y1="4.5" x2="8" y2="11.5" stroke="#0f172a" stroke-width="1.5"/>
+            <line x1="11.5" y1="4.5" x2="11.5" y2="11.5" stroke="#0f172a" stroke-width="1.5"/>
+          </svg>
+        </div>
+        <div>
+          <div style="display:flex; align-items:baseline; gap:8px; line-height:1.2;">
+            <span class="font-semibold text-slate-900" style="font-size:15px; letter-spacing:0.08em;">VAJRA</span>
+            <span class="text-slate-300" style="font-size:13px;">·</span>
+            <span class="text-[11px] font-medium tracking-[0.1em] uppercase text-slate-500">CWR Anomaly Detection Engine</span>
+          </div>
+          <div class="font-mono text-[9.5px] text-slate-400 tracking-[0.08em] uppercase" style="line-height:1.4; margin-top:3px;">Indian Railways · RDSO · RailTech Policy 2026</div>
+        </div>
+      </div>
+
+      <!-- System status cluster -->
+      <div style="display:flex; align-items:center; gap:24px;">
+        <!-- Live connection -->
+        <div style="display:flex; align-items:center; gap:6px;">
+          <div id="live-dot" style="width:6px; height:6px; border-radius:50%; background-color:#059669;"></div>
+          <span class="font-mono text-[10px] tracking-[0.14em] uppercase text-slate-500">Live</span>
+        </div>
+        <!-- UTC Clock -->
+        <div id="clock" class="font-mono text-[12px] text-slate-700" style="font-variant-numeric:tabular-nums; min-width:88px;">00:00:00 UTC</div>
+        <!-- Poll dot -->
+        <div style="display:flex; align-items:center; gap:6px;">
+          <div id="poll-dot" style="width:5px; height:5px; border-radius:50%; background-color:#cbd5e1; transition:background-color 0.15s;"></div>
+          <span class="font-mono text-[9.5px] text-slate-400">800 ms</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ════════════════════════════════════════════════════════════
+       CRITICAL ALERT BANNER
+       Solid red, white text — no glow, no animation, pure authority.
+       Hidden by default; JS shows/hides this element.
+  ════════════════════════════════════════════════════════════ -->
+  <div id="alert-banner" class="hidden" style="background-color:#dc2626;">
+    <div class="max-w-screen-2xl mx-auto px-6 py-3">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:24px;">
+        <!-- Left: classification + location + mode -->
+        <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+          <span class="font-semibold text-white text-[11px] tracking-[0.22em] uppercase">Emergency Brake Command</span>
+          <span id="alert-location" class="font-mono text-[11px]" style="color:#fecaca;">NDLS-AGRA-SEC1 · KM 412</span>
+          <span id="alert-mode" class="font-mono text-[10px] font-semibold tracking-[0.12em] uppercase text-white" style="background:rgba(255,255,255,0.15); padding:1px 8px;">—</span>
+        </div>
+        <!-- Right: readings + timestamp -->
+        <div style="display:flex; align-items:center; gap:20px; flex-shrink:0;">
+          <span class="font-mono text-[11px] text-white">Stress: <strong id="alert-stress">—</strong> MPa</span>
+          <span class="font-mono text-[11px] text-white">Temp: <strong id="alert-temp">—</strong> °C</span>
+          <span id="alert-ts" class="font-mono text-[10px]" style="color:#fca5a5;">—</span>
+        </div>
+      </div>
+      <!-- Prescribed action -->
+      <p id="alert-action-text" class="text-[11px] font-medium leading-snug" style="color:#fee2e2; margin-top:6px;">
+        Halt all trains on NDLS-AGRA-SEC1. Dispatch Permanent Way (P-Way) gang immediately to KM 412.
+      </p>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════
+       MAIN — Bento Grid
+  ════════════════════════════════════════════════════════════ -->
+  <main class="max-w-screen-2xl mx-auto px-6 py-4 space-y-3">
+
+    <!-- ── Row 1: KPI Cards ─────────────────────────────────── -->
+    <div class="grid grid-cols-4 gap-3">
+
+      <!-- KPI 1: Rail Stress -->
+      <div id="card-stress" class="bg-white border border-slate-200 shadow-sm p-5 accent-neutral" style="border-left-width:3px;">
+        <div class="text-[10px] font-semibold tracking-[0.18em] uppercase text-slate-400 mb-3">Rail Stress</div>
+        <div style="display:flex; align-items:baseline; gap:5px;">
+          <span id="val-stress" class="font-mono font-semibold val-neutral" style="font-size:34px; line-height:1; font-variant-numeric:tabular-nums;">—</span>
+          <span class="font-mono text-[11px] text-slate-400">MPa</span>
+        </div>
+        <!-- Threshold micro-bar -->
+        <div class="mt-3" style="position:relative;">
+          <!-- Track marks at thresholds: 90 MPa = 42.8%, 120 MPa = 57.1% of 210 -->
+          <div style="height:2px; background:#f1f5f9; position:relative; border-radius:1px;">
+            <div id="stress-bar" class="micro-bar bar-healthy" style="height:2px; width:0%; border-radius:1px; position:absolute; left:0; top:0;"></div>
+            <!-- Threshold tick at 90 MPa -->
+            <div style="position:absolute; top:-3px; left:42.8%; width:1px; height:8px; background:#e2e8f0;"></div>
+            <!-- Threshold tick at 120 MPa -->
+            <div style="position:absolute; top:-3px; left:57.1%; width:1px; height:8px; background:#e2e8f0;"></div>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-top:4px;">
+            <span class="font-mono text-[9px] text-slate-300">0</span>
+            <span class="font-mono text-[9px] text-slate-300" style="position:absolute; left:42.8%; transform:translateX(-50%);">90</span>
+            <span class="font-mono text-[9px] text-slate-300" style="position:absolute; left:57.1%; transform:translateX(-50%);">120</span>
+            <span class="font-mono text-[9px] text-slate-300">210</span>
+          </div>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
+          <span class="font-mono text-[10px] text-slate-400">MegaPascals</span>
+          <span id="trend-stress" class="font-mono text-[10px] text-slate-400">—</span>
+        </div>
+      </div>
+
+      <!-- KPI 2: Rail Temperature -->
+      <div id="card-temp" class="bg-white border border-slate-200 shadow-sm p-5 accent-neutral" style="border-left-width:3px;">
+        <div class="text-[10px] font-semibold tracking-[0.18em] uppercase text-slate-400 mb-3">Rail Temperature</div>
+        <div style="display:flex; align-items:baseline; gap:5px;">
+          <span id="val-temp" class="font-mono font-semibold val-neutral" style="font-size:34px; line-height:1; font-variant-numeric:tabular-nums;">—</span>
+          <span class="font-mono text-[11px] text-slate-400">°C</span>
+        </div>
+        <!-- Threshold micro-bar (50°C crit = 71.4% of 70) -->
+        <div class="mt-3" style="position:relative;">
+          <div style="height:2px; background:#f1f5f9; position:relative; border-radius:1px;">
+            <div id="temp-bar" class="micro-bar bar-healthy" style="height:2px; width:0%; border-radius:1px; position:absolute; left:0; top:0;"></div>
+            <div style="position:absolute; top:-3px; left:71.4%; width:1px; height:8px; background:#e2e8f0;"></div>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-top:4px; position:relative;">
+            <span class="font-mono text-[9px] text-slate-300">0°</span>
+            <span class="font-mono text-[9px] text-slate-300" style="position:absolute; left:71.4%; transform:translateX(-50%);">50°</span>
+            <span class="font-mono text-[9px] text-slate-300">70°</span>
+          </div>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
+          <span class="font-mono text-[10px] text-slate-400">Degrees Celsius</span>
+          <span id="trend-temp" class="font-mono text-[10px] text-slate-400">—</span>
+        </div>
+      </div>
+
+      <!-- KPI 3: Risk Classification -->
+      <div id="card-risk" class="bg-white border border-slate-200 shadow-sm p-5 accent-neutral" style="border-left-width:3px;">
+        <div class="text-[10px] font-semibold tracking-[0.18em] uppercase text-slate-400 mb-3">Risk Classification</div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+          <div id="risk-dot" class="dot-awaiting" style="width:8px; height:8px; border-radius:50%; flex-shrink:0;"></div>
+          <span id="val-risk" class="font-semibold val-neutral" style="font-size:20px; line-height:1.2;">AWAITING</span>
+        </div>
+        <p id="val-action" class="text-[11px] text-slate-500 leading-relaxed clamp-2" style="margin-top:8px;">
+          Awaiting first telemetry packet from sensor simulator…
+        </p>
+      </div>
+
+      <!-- KPI 4: Active Section / System Info -->
+      <div id="card-section" class="bg-white border border-slate-200 shadow-sm p-5" style="border-left-width:3px; border-left-color:#e2e8f0;">
+        <div class="text-[10px] font-semibold tracking-[0.18em] uppercase text-slate-400 mb-3">Active Section</div>
+        <div class="font-mono font-semibold text-slate-900" style="font-size:15px; letter-spacing:0.02em;">NDLS-AGRA-SEC1</div>
+        <div class="font-mono text-[11px] text-slate-500" style="margin-top:4px;">
+          KM <strong class="text-slate-800">412</strong>
+          <span style="color:#cbd5e1; margin:0 4px;">|</span>
+          SEC-C
+          <span style="color:#cbd5e1; margin:0 4px;">|</span>
+          Monitored
+        </div>
+        <div style="margin-top:12px; space-y:4px;">
+          <div id="val-timestamp" class="font-mono text-[10px] text-slate-400" style="margin-bottom:3px;">—</div>
+          <div class="font-mono text-[10px] text-slate-400">
+            Poll latency: <span id="stat-latency" class="text-slate-600">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Row 2: Blueprint Track Map ───────────────────────── -->
+    <div class="bg-white border border-slate-200 shadow-sm">
+      <!-- Panel header -->
+      <div class="border-b border-slate-100" style="padding:12px 20px; display:flex; align-items:center; justify-content:space-between;">
+        <div>
+          <div class="text-[10px] font-semibold tracking-[0.18em] uppercase text-slate-400">Route Topology</div>
+          <div class="text-[12px] text-slate-600" style="margin-top:2px;">New Delhi → Agra Cantonment · NDLS–AGC Corridor · 526 km</div>
+        </div>
+        <!-- Legend -->
+        <div style="display:flex; align-items:center; gap:20px;">
+          <div style="display:flex; align-items:center; gap:6px;"><div style="width:20px; height:2px; background:#059669;"></div><span class="font-mono text-[10px] text-slate-500">Healthy</span></div>
+          <div style="display:flex; align-items:center; gap:6px;"><div style="width:20px; height:2px; background:#92400e;"></div><span class="font-mono text-[10px] text-slate-500">Warning</span></div>
+          <div style="display:flex; align-items:center; gap:6px;"><div style="width:20px; height:2px; background:#dc2626;"></div><span class="font-mono text-[10px] text-slate-500">Critical</span></div>
+          <div style="display:flex; align-items:center; gap:6px;"><div style="width:20px; height:2px; background:#cbd5e1;"></div><span class="font-mono text-[10px] text-slate-500">Awaiting</span></div>
+        </div>
+      </div>
+
+      <!-- SVG: Engineering schematic, CAD blueprint aesthetic -->
+      <div style="padding:20px 20px 16px;">
+        <svg id="track-svg" viewBox="0 0 920 156" xmlns="http://www.w3.org/2000/svg"
+             style="width:100%; height:auto; max-height:156px; display:block;">
+          <defs>
+            <!-- Subtle engineering dot-grid background -->
+            <pattern id="eng-grid" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">
+              <circle cx="12" cy="12" r="0.7" fill="#e2e8f0"/>
+            </pattern>
+          </defs>
+
+          <!-- Grid background -->
+          <rect x="0" y="0" width="920" height="156" fill="url(#eng-grid)" opacity="0.7"/>
+
+          <!-- Baseline rule (distance datum) -->
+          <line x1="64" y1="120" x2="876" y2="120" stroke="#e2e8f0" stroke-width="0.5"/>
+
+          <!-- Rail channel fill (very light) -->
+          <rect x="64" y="68" width="812" height="8" fill="#f8fafc"/>
+
+          <!-- Rail sleeper ties — uniform 32px spacing -->
+          <g stroke="#e2e8f0" stroke-width="1.25" stroke-linecap="square">
+            <line x1="96"  y1="63" x2="96"  y2="81"/> <line x1="128" y1="63" x2="128" y2="81"/>
+            <line x1="160" y1="63" x2="160" y2="81"/> <line x1="192" y1="63" x2="192" y2="81"/>
+            <line x1="224" y1="63" x2="224" y2="81"/> <line x1="256" y1="63" x2="256" y2="81"/>
+            <line x1="288" y1="63" x2="288" y2="81"/> <line x1="320" y1="63" x2="320" y2="81"/>
+            <line x1="352" y1="63" x2="352" y2="81"/> <line x1="384" y1="63" x2="384" y2="81"/>
+            <line x1="416" y1="63" x2="416" y2="81"/> <line x1="448" y1="63" x2="448" y2="81"/>
+            <line x1="480" y1="63" x2="480" y2="81"/> <line x1="512" y1="63" x2="512" y2="81"/>
+            <line x1="544" y1="63" x2="544" y2="81"/> <line x1="576" y1="63" x2="576" y2="81"/>
+            <line x1="608" y1="63" x2="608" y2="81"/> <line x1="640" y1="63" x2="640" y2="81"/>
+            <line x1="672" y1="63" x2="672" y2="81"/> <line x1="704" y1="63" x2="704" y2="81"/>
+            <line x1="736" y1="63" x2="736" y2="81"/> <line x1="768" y1="63" x2="768" y2="81"/>
+            <line x1="800" y1="63" x2="800" y2="81"/> <line x1="832" y1="63" x2="832" y2="81"/>
+            <line x1="864" y1="63" x2="864" y2="81"/>
+          </g>
+
+          <!-- ── Track Segments ── -->
+          <!-- Seg A: NDLS → Faridabad (static healthy) -->
+          <line id="seg-a" x1="64" y1="72" x2="252" y2="72"
+                stroke="#059669" stroke-width="2.5" stroke-linecap="square"/>
+          <!-- Seg B: Faridabad → Mathura Jn (static healthy) -->
+          <line id="seg-b" x1="252" y1="72" x2="496" y2="72"
+                stroke="#059669" stroke-width="2.5" stroke-linecap="square"/>
+          <!-- Seg C: Mathura → KM 412 Sensor (LIVE — status-driven) -->
+          <line id="seg-c" x1="496" y1="72" x2="608" y2="72"
+                stroke="#cbd5e1" stroke-width="3" stroke-linecap="square"/>
+          <!-- Seg D: KM 412 → Agra Cantt (static healthy) -->
+          <line id="seg-d" x1="608" y1="72" x2="876" y2="72"
+                stroke="#059669" stroke-width="2.5" stroke-linecap="square"/>
+
+          <!-- ── Station Nodes ── -->
+          <!-- Major terminal: squares with thicker stroke -->
+          <!-- NDLS — New Delhi -->
+          <rect x="57" y="65" width="14" height="14" fill="white" stroke="#334155" stroke-width="1.5"/>
+          <line x1="64" y1="120" x2="64" y2="84" stroke="#94a3b8" stroke-width="0.5" stroke-dasharray="2 2"/>
+          <text x="64" y="54" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="9.5" font-weight="600" fill="#0f172a">NDLS</text>
+          <text x="64" y="44" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="8" fill="#64748b">New Delhi</text>
+          <text x="64" y="131" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="7.5" fill="#94a3b8">KM 0</text>
+
+          <!-- Faridabad (minor junction) -->
+          <rect x="246" y="67" width="12" height="10" fill="white" stroke="#64748b" stroke-width="1"/>
+          <line x1="252" y1="120" x2="252" y2="82" stroke="#94a3b8" stroke-width="0.5" stroke-dasharray="2 2"/>
+          <text x="252" y="58" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="8.5" fill="#475569">FBD</text>
+          <text x="252" y="131" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="7.5" fill="#94a3b8">KM 128</text>
+
+          <!-- Mathura Junction -->
+          <rect x="489" y="65" width="14" height="14" fill="white" stroke="#475569" stroke-width="1.25"/>
+          <line x1="496" y1="120" x2="496" y2="84" stroke="#94a3b8" stroke-width="0.5" stroke-dasharray="2 2"/>
+          <text x="496" y="54" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="8.5" fill="#475569">MTJ</text>
+          <text x="496" y="44" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="7.5" fill="#94a3b8">Mathura Jn</text>
+          <text x="496" y="131" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="7.5" fill="#94a3b8">KM 372</text>
+
+          <!-- ══ SENSOR NODE: KM 412 — precision engineering marker ══ -->
+          <!-- Vertical datum line (dashed, from callout to baseline) -->
+          <line x1="608" y1="18" x2="608" y2="120" stroke="#475569" stroke-width="0.75" stroke-dasharray="3 3"/>
+          <!-- Callout annotation box -->
+          <rect x="572" y="6" width="72" height="22" fill="white" stroke="#cbd5e1" stroke-width="0.75"/>
+          <text x="608" y="16" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="7" font-weight="500" fill="#64748b" letter-spacing="0.04em">SENSOR NODE</text>
+          <text x="608" y="25" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="8.5" font-weight="600" fill="#0f172a">KM 412</text>
+          <!-- CAD crosshair diamond -->
+          <polygon id="sensor-marker" points="608,61 616,72 608,83 600,72"
+                   fill="white" stroke="#475569" stroke-width="1.25"/>
+          <!-- Live status fill dot at sensor center -->
+          <circle id="sensor-dot" cx="608" cy="72" r="3.5" class="sensor-awaiting"/>
+          <text x="608" y="131" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="7.5" fill="#94a3b8">KM 412</text>
+
+          <!-- Agra Cantonment (major terminal) -->
+          <rect x="869" y="65" width="14" height="14" fill="white" stroke="#334155" stroke-width="1.5"/>
+          <line x1="876" y1="120" x2="876" y2="84" stroke="#94a3b8" stroke-width="0.5" stroke-dasharray="2 2"/>
+          <text x="876" y="54" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="9.5" font-weight="600" fill="#0f172a">AGC</text>
+          <text x="876" y="44" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="8" fill="#64748b">Agra Cantt</text>
+          <text x="876" y="131" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="7.5" fill="#94a3b8">KM 526</text>
+
+          <!-- Scale annotation -->
+          <text x="68" y="148" font-family="'JetBrains Mono',monospace" font-size="7" fill="#94a3b8" letter-spacing="0.02em">← 526 km total corridor — New Delhi Cantt to Agra Cantonment</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- ── Row 3: Segment Status + System Statistics ─────────── -->
+    <div class="grid grid-cols-3 gap-3">
+
+      <!-- Segment Status Table (2/3 width) -->
+      <div class="col-span-2 bg-white border border-slate-200 shadow-sm">
+        <div class="border-b border-slate-100" style="padding:12px 20px;">
+          <div class="text-[10px] font-semibold tracking-[0.18em] uppercase text-slate-400">Segment Status — NDLS–AGC Corridor</div>
+        </div>
+
+        <div style="divide-y: 1px solid #f8fafc;">
+          <!-- Seg A: Static healthy -->
+          <div class="border-b border-slate-50" style="padding:12px 20px; display:flex; align-items:center; justify-content:space-between;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div class="dot-healthy" style="width:6px; height:6px; border-radius:50%; flex-shrink:0;"></div>
+              <div>
+                <div class="text-[13px] font-medium text-slate-900">New Delhi → Faridabad</div>
+                <div class="font-mono text-[10.5px] text-slate-400" style="margin-top:2px;">KM 0 – KM 128 · SEC-A</div>
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:20px;">
+              <span class="font-mono text-[11px] text-slate-400">—</span>
+              <span class="font-mono font-semibold text-[9.5px] tracking-[0.14em] uppercase badge-healthy" style="padding:2px 8px;">Healthy</span>
+            </div>
+          </div>
+
+          <!-- Seg B: Static healthy -->
+          <div class="border-b border-slate-50" style="padding:12px 20px; display:flex; align-items:center; justify-content:space-between;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div class="dot-healthy" style="width:6px; height:6px; border-radius:50%; flex-shrink:0;"></div>
+              <div>
+                <div class="text-[13px] font-medium text-slate-900">Faridabad → Mathura Junction</div>
+                <div class="font-mono text-[10.5px] text-slate-400" style="margin-top:2px;">KM 128 – KM 372 · SEC-B</div>
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:20px;">
+              <span class="font-mono text-[11px] text-slate-400">—</span>
+              <span class="font-mono font-semibold text-[9.5px] tracking-[0.14em] uppercase badge-healthy" style="padding:2px 8px;">Healthy</span>
+            </div>
+          </div>
+
+          <!-- Seg C: Live monitored — status-driven by JS -->
+          <div class="border-b border-slate-50" id="seg-row-c" style="padding:12px 20px; display:flex; align-items:center; justify-content:space-between; background:#f8fafc;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div id="seg-dot-c" class="dot-awaiting" style="width:6px; height:6px; border-radius:50%; flex-shrink:0;"></div>
+              <div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span class="text-[13px] font-medium text-slate-900">Mathura Junction → KM 412</span>
+                  <span class="font-mono font-semibold text-[9px] tracking-[0.16em] uppercase" style="color:#2563eb;">Active Sensor</span>
+                </div>
+                <div class="font-mono text-[10.5px] text-slate-400" style="margin-top:2px;">KM 372 – KM 412 · SEC-C (Monitored)</div>
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:20px;">
+              <span id="seg-c-metrics" class="font-mono text-[11px] text-slate-500">—</span>
+              <span id="seg-c-pill" class="font-mono font-semibold text-[9.5px] tracking-[0.14em] uppercase badge-awaiting" style="padding:2px 8px;">Awaiting</span>
+            </div>
+          </div>
+
+          <!-- Seg D: Static healthy -->
+          <div style="padding:12px 20px; display:flex; align-items:center; justify-content:space-between;">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div class="dot-healthy" style="width:6px; height:6px; border-radius:50%; flex-shrink:0;"></div>
+              <div>
+                <div class="text-[13px] font-medium text-slate-900">KM 412 → Agra Cantonment</div>
+                <div class="font-mono text-[10.5px] text-slate-400" style="margin-top:2px;">KM 412 – KM 526 · SEC-D</div>
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:20px;">
+              <span class="font-mono text-[11px] text-slate-400">—</span>
+              <span class="font-mono font-semibold text-[9.5px] tracking-[0.14em] uppercase badge-healthy" style="padding:2px 8px;">Healthy</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- System Statistics (1/3 width) -->
+      <div class="bg-white border border-slate-200 shadow-sm">
+        <div class="border-b border-slate-100" style="padding:12px 20px;">
+          <div class="text-[10px] font-semibold tracking-[0.18em] uppercase text-slate-400">System Statistics</div>
+        </div>
+        <div style="padding:20px;">
+
+          <div style="margin-bottom:16px;">
+            <div class="text-[10px] font-semibold tracking-[0.14em] uppercase text-slate-400" style="margin-bottom:4px;">Packets Processed</div>
+            <div id="stat-packets" class="font-mono font-semibold text-slate-900" style="font-size:28px; line-height:1; font-variant-numeric:tabular-nums;">0</div>
+          </div>
+
+          <div style="border-top:1px solid #f1f5f9; padding-top:16px; margin-bottom:16px;">
+            <div class="text-[10px] font-semibold tracking-[0.14em] uppercase text-slate-400" style="margin-bottom:4px;">Anomalies Detected</div>
+            <div id="stat-anomalies" class="font-mono font-semibold" style="font-size:28px; line-height:1; font-variant-numeric:tabular-nums; color:#dc2626;">0</div>
+          </div>
+
+          <div style="border-top:1px solid #f1f5f9; padding-top:16px; margin-bottom:16px;">
+            <div class="text-[10px] font-semibold tracking-[0.14em] uppercase text-slate-400" style="margin-bottom:4px;">Anomaly Rate</div>
+            <div id="stat-rate" class="font-mono font-semibold" style="font-size:28px; line-height:1; font-variant-numeric:tabular-nums; color:#92400e;">—%</div>
+          </div>
+
+          <div style="border-top:1px solid #f1f5f9; padding-top:16px; margin-bottom:16px;">
+            <div class="text-[10px] font-semibold tracking-[0.14em] uppercase text-slate-400" style="margin-bottom:4px;">Last Evaluated</div>
+            <div id="stat-eval" class="font-mono text-slate-600" style="font-size:11px; font-variant-numeric:tabular-nums;">—</div>
+          </div>
+
+          <div style="border-top:1px solid #f1f5f9; padding-top:16px;">
+            <div class="text-[10px] font-semibold tracking-[0.14em] uppercase text-slate-400" style="margin-bottom:6px;">Prescribed Action</div>
+            <p id="prescribed-action" class="text-[11px] text-slate-600 leading-relaxed">
+              Awaiting first telemetry packet…
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Row 4: Telemetry Log Table ───────────────────────── -->
+    <div class="bg-white border border-slate-200 shadow-sm">
+      <div class="border-b border-slate-100" style="padding:12px 20px; display:flex; align-items:center; justify-content:space-between;">
+        <div class="text-[10px] font-semibold tracking-[0.18em] uppercase text-slate-400">Telemetry Log</div>
+        <div class="font-mono text-[10px] text-slate-400">Last 10 packets · /api/track-status</div>
+      </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr style="border-bottom:1px solid #f1f5f9;">
+              <th style="padding:10px 20px; text-align:left;"  class="font-mono text-[9.5px] font-semibold tracking-[0.16em] uppercase text-slate-400 font-normal">Timestamp (UTC)</th>
+              <th style="padding:10px 12px; text-align:right;" class="font-mono text-[9.5px] font-semibold tracking-[0.16em] uppercase text-slate-400 font-normal">Stress (MPa)</th>
+              <th style="padding:10px 12px; text-align:right;" class="font-mono text-[9.5px] font-semibold tracking-[0.16em] uppercase text-slate-400 font-normal">Temp (°C)</th>
+              <th style="padding:10px 12px; text-align:center;" class="font-mono text-[9.5px] font-semibold tracking-[0.16em] uppercase text-slate-400 font-normal">Classification</th>
+              <th style="padding:10px 20px; text-align:left;"  class="font-mono text-[9.5px] font-semibold tracking-[0.16em] uppercase text-slate-400 font-normal">Prescribed Action</th>
+            </tr>
+          </thead>
+          <tbody id="log-body">
+            <tr>
+              <td colspan="5" class="font-mono text-[11px] text-slate-400" style="padding:32px 20px; text-align:center;">
+                Awaiting first telemetry packet from sensor simulator…
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ════════════════════════════════════════════════════════════
+       FOOTER
+  ════════════════════════════════════════════════════════════ -->
+  <footer class="border-t border-slate-200" style="margin-top:16px;">
+    <div class="max-w-screen-2xl mx-auto px-6" style="padding-top:12px; padding-bottom:12px; display:flex; align-items:center; justify-content:space-between;">
+      <div class="font-mono text-[10px] text-slate-400">
+        CWR Anomaly Engine · IS:3443 / UIC 60 · RDSO Guidelines 2022 · Ministry of Railways, Government of India
+      </div>
+      <div class="font-mono text-[10px] text-slate-400">
+        Polling /api/track-status @ 800 ms
+      </div>
+    </div>
+  </footer>
+
+
+  <!-- ════════════════════════════════════════════════════════════
+       JAVASCRIPT — Polling Engine + DOM Orchestration
+       Mirrors the data contract of TrackStatusResponse.java
+  ════════════════════════════════════════════════════════════ -->
+  <script>
+    'use strict';
+
+    /* ─────────────────────────────────────────────────────────────
+       CONSTANTS — mirror TrackEvaluationService.java thresholds
+    ───────────────────────────────────────────────────────────── */
+    const POLL_INTERVAL_MS    = 800;
+    const STATUS_ENDPOINT     = '/api/track-status';
+    const MAX_LOG_ROWS        = 10;
+    const STRESS_MAX_DISPLAY  = 210;   // upper bound for bar scaling (max anomaly)
+    const TEMP_MAX_DISPLAY    = 70;    // °C upper bound for bar scaling
+    const TEMP_WARN_C         = 44;    // conservative visual warning threshold
+
+    /* ─────────────────────────────────────────────────────────────
+       APPLICATION STATE
+    ───────────────────────────────────────────────────────────── */
+    let lastStress = null;
+    let lastTemp   = null;
+    let logRows    = [];
+
+    /* ─────────────────────────────────────────────────────────────
+       CLOCK — live UTC wall clock
+    ───────────────────────────────────────────────────────────── */
+    function updateClock() {
+      const now = new Date();
+      const hh  = String(now.getUTCHours()).padStart(2, '0');
+      const mm  = String(now.getUTCMinutes()).padStart(2, '0');
+      const ss  = String(now.getUTCSeconds()).padStart(2, '0');
+      document.getElementById('clock').textContent = `${hh}:${mm}:${ss} UTC`;
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    /* ─────────────────────────────────────────────────────────────
+       RISK CLASS RESOLVER
+       Maps API riskLevel string → CSS class suffix token
+    ───────────────────────────────────────────────────────────── */
+    function resolveClass(riskLevel) {
+      switch ((riskLevel || '').toUpperCase()) {
+        case 'CRITICAL': return 'critical';
+        case 'WARNING':  return 'warning';
+        case 'HEALTHY':  return 'healthy';
+        default:         return 'awaiting';
+      }
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+       APPLY STATUS
+       Master DOM-orchestration function. Receives a parsed
+       TrackStatusResponse JSON object and updates every element.
+    ───────────────────────────────────────────────────────────── */
+    function applyStatus(s) {
+      const cls = resolveClass(s.riskLevel);
+
+      /* ── 1. Rail Stress KPI ─────────────────────────────── */
+      const stressEl = document.getElementById('val-stress');
+      stressEl.textContent = s.stressMPa.toFixed(1);
+      stressEl.className   = `font-mono font-semibold val-${cls}`;
+      stressEl.style.cssText = 'font-size:34px; line-height:1; font-variant-numeric:tabular-nums;';
+
+      // Stress bar: proportional to max display range
+      const stressPct = Math.min((s.stressMPa / STRESS_MAX_DISPLAY) * 100, 100);
+      const stressBar = document.getElementById('stress-bar');
+      stressBar.style.width = stressPct.toFixed(2) + '%';
+      stressBar.className   = `micro-bar bar-${cls}`;
+      stressBar.style.height = '2px';
+      stressBar.style.borderRadius = '1px';
+      stressBar.style.position = 'absolute';
+      stressBar.style.left = '0';
+      stressBar.style.top = '0';
+
+      // Trend delta arrow
+      if (lastStress !== null) {
+        const delta = s.stressMPa - lastStress;
+        document.getElementById('trend-stress').textContent =
+          (delta >= 0 ? '▴ +' : '▾ ') + Math.abs(delta).toFixed(1);
+      }
+      lastStress = s.stressMPa;
+
+      // Card left accent
+      setCardAccent('card-stress', cls);
+
+      /* ── 2. Rail Temperature KPI ─────────────────────────── */
+      const tempCls = s.railTemperature > 50 ? 'critical'
+                    : s.railTemperature > TEMP_WARN_C ? 'warning' : 'healthy';
+      const tempEl  = document.getElementById('val-temp');
+      tempEl.textContent = s.railTemperature.toFixed(1);
+      tempEl.className   = `font-mono font-semibold val-${tempCls}`;
+      tempEl.style.cssText = 'font-size:34px; line-height:1; font-variant-numeric:tabular-nums;';
+
+      const tempPct = Math.min((s.railTemperature / TEMP_MAX_DISPLAY) * 100, 100);
+      const tempBar = document.getElementById('temp-bar');
+      tempBar.style.width = tempPct.toFixed(2) + '%';
+      tempBar.className   = `micro-bar bar-${tempCls}`;
+      tempBar.style.height = '2px';
+      tempBar.style.borderRadius = '1px';
+      tempBar.style.position = 'absolute';
+      tempBar.style.left = '0';
+      tempBar.style.top = '0';
+
+      if (lastTemp !== null) {
+        const delta = s.railTemperature - lastTemp;
+        document.getElementById('trend-temp').textContent =
+          (delta >= 0 ? '▴ +' : '▾ ') + Math.abs(delta).toFixed(1);
+      }
+      lastTemp = s.railTemperature;
+
+      setCardAccent('card-temp', tempCls);
+
+      /* ── 3. Risk Classification KPI ─────────────────────── */
+      // Status dot
+      const riskDot = document.getElementById('risk-dot');
+      riskDot.className = `dot-${cls}`;
+      riskDot.style.cssText = 'width:8px; height:8px; border-radius:50%; flex-shrink:0;';
+
+      // Risk label
+      const riskEl  = document.getElementById('val-risk');
+      riskEl.textContent = s.statusLabel || s.riskLevel || 'UNKNOWN';
+      riskEl.className   = `font-semibold val-${cls}`;
+      riskEl.style.cssText = 'font-size:20px; line-height:1.2;';
+
+      setCardAccent('card-risk', cls);
+
+      // Truncated action for KPI card
+      const shortAct = (s.action || '').length > 95
+        ? (s.action || '').slice(0, 93) + '…'
+        : (s.action || '—');
+      document.getElementById('val-action').textContent = shortAct;
+
+      /* ── 4. Active Section: timestamp ───────────────────── */
+      if (s.lastUpdated) {
+        const t = new Date(s.lastUpdated);
+        document.getElementById('val-timestamp').textContent =
+          'Last packet: ' + t.toISOString().slice(11, 19) + ' UTC';
+      }
+
+      /* ── 5. Critical Alert Banner ───────────────────────── */
+      const banner = document.getElementById('alert-banner');
+      if (s.riskLevel === 'CRITICAL') {
+        banner.classList.remove('hidden');
+        document.getElementById('alert-stress').textContent   = s.stressMPa.toFixed(1);
+        document.getElementById('alert-temp').textContent     = s.railTemperature.toFixed(1);
+        document.getElementById('alert-mode').textContent     = s.anomalyMode || 'THRESHOLD BREACH';
+        document.getElementById('alert-location').textContent =
+          (s.sectionId || 'NDLS-AGRA-SEC1') + ' · KM ' + (s.kmMarker || 412);
+        document.getElementById('alert-action-text').textContent =
+          s.action || 'Halt all trains on NDLS-AGRA-SEC1. Dispatch P-Way gang immediately to KM 412.';
+        const detectedAt = new Date();
+        document.getElementById('alert-ts').textContent =
+          'Detected ' + detectedAt.toISOString().slice(11, 19) + ' UTC';
+      } else {
+        banner.classList.add('hidden');
+      }
+
+      /* ── 6. SVG Blueprint Track Map ─────────────────────── */
+      const segC        = document.getElementById('seg-c');
+      const sensorDot   = document.getElementById('sensor-dot');
+      const sensorMark  = document.getElementById('sensor-marker');
+
+      // Segment C color
+      const segStroke = cls === 'critical' ? '#dc2626'
+                      : cls === 'warning'  ? '#92400e'
+                      : cls === 'healthy'  ? '#059669' : '#cbd5e1';
+      segC.setAttribute('stroke', segStroke);
+      segC.setAttribute('stroke-width', cls === 'critical' ? '3.5' : '3');
+
+      // Sensor dot
+      sensorDot.setAttribute('class', `sensor-${cls}`);
+
+      // Sensor marker border tracks status
+      const markerStroke = cls === 'critical' ? '#dc2626'
+                         : cls === 'warning'  ? '#92400e'
+                         : cls === 'healthy'  ? '#059669' : '#475569';
+      sensorMark.setAttribute('stroke', markerStroke);
+
+      /* ── 7. Segment Row C ────────────────────────────────── */
+      const segDotC = document.getElementById('seg-dot-c');
+      segDotC.className = `dot-${cls}`;
+      segDotC.style.cssText = 'width:6px; height:6px; border-radius:50%; flex-shrink:0;';
+
+      document.getElementById('seg-c-metrics').textContent =
+        s.stressMPa.toFixed(1) + ' MPa · ' + s.railTemperature.toFixed(1) + ' °C';
+
+      const pill = document.getElementById('seg-c-pill');
+      pill.className   = `font-mono font-semibold text-[9.5px] tracking-[0.14em] uppercase badge-${cls}`;
+      pill.style.padding = '2px 8px';
+      pill.textContent = cls === 'critical' ? 'CRITICAL'
+                       : cls === 'warning'  ? 'WARNING'
+                       : cls === 'healthy'  ? 'Healthy' : 'Awaiting';
+
+      /* ── 8. System Statistics ────────────────────────────── */
+      document.getElementById('stat-packets').textContent   = s.totalPacketsProcessed.toLocaleString();
+      document.getElementById('stat-anomalies').textContent = s.totalAnomaliesDetected.toLocaleString();
+      document.getElementById('prescribed-action').textContent = s.action || '—';
+
+      if (s.totalPacketsProcessed > 0) {
+        const rate = (s.totalAnomaliesDetected / s.totalPacketsProcessed * 100).toFixed(1);
+        document.getElementById('stat-rate').textContent = rate + '%';
+      }
+      if (s.evaluatedAt) {
+        document.getElementById('stat-eval').textContent =
+          new Date(s.evaluatedAt).toISOString().slice(11, 23) + ' UTC';
+      }
+
+      /* ── 9. Telemetry Log ring buffer ────────────────────── */
+      logRows.unshift({
+        ts:     new Date().toISOString().slice(11, 23),
+        stress: s.stressMPa,
+        temp:   s.railTemperature,
+        risk:   s.riskLevel,
+        action: s.action || '—'
+      });
+      if (logRows.length > MAX_LOG_ROWS) logRows.pop();
+      renderLog();
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+       HELPER: Set left accent border on KPI cards
+    ───────────────────────────────────────────────────────────── */
+    function setCardAccent(cardId, cls) {
+      const el = document.getElementById(cardId);
+      if (!el) return;
+      const colorMap = {
+        healthy:  '#059669',
+        warning:  '#92400e',
+        critical: '#dc2626',
+        awaiting: '#e2e8f0'
+      };
+      el.style.borderLeftColor = colorMap[cls] || '#e2e8f0';
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+       RENDER LOG TABLE
+       Builds the last-10 telemetry log table from the ring buffer.
+    ───────────────────────────────────────────────────────────── */
+    function renderLog() {
+      const tbody = document.getElementById('log-body');
+      if (!logRows.length) return;
+
+      tbody.innerHTML = logRows.map((r, idx) => {
+        const cls      = resolveClass(r.risk);
+        const valColor = cls === 'critical' ? '#dc2626'
+                       : cls === 'warning'  ? '#92400e'
+                       : cls === 'healthy'  ? '#059669' : '#94a3b8';
+        const bdgBg    = cls === 'critical' ? '#fef2f2'
+                       : cls === 'warning'  ? '#fffbeb'
+                       : cls === 'healthy'  ? '#ecfdf5' : '#f8fafc';
+        const truncAct = r.action.length > 72 ? r.action.slice(0, 70) + '…' : r.action;
+        const rowBg    = idx === 0 ? 'background-color:#f8fafc;' : '';
+
+        return `<tr class="log-row" style="${rowBg} border-bottom:1px solid #f8fafc;">
+          <td class="font-mono text-[11px] text-slate-500" style="padding:10px 20px; font-variant-numeric:tabular-nums;">${r.ts}</td>
+          <td class="font-mono font-semibold text-[12px]" style="padding:10px 12px; text-align:right; color:${valColor}; font-variant-numeric:tabular-nums;">${r.stress.toFixed(2)}</td>
+          <td class="font-mono font-semibold text-[12px]" style="padding:10px 12px; text-align:right; color:${valColor}; font-variant-numeric:tabular-nums;">${r.temp.toFixed(2)}</td>
+          <td style="padding:10px 12px; text-align:center;">
+            <span class="font-mono font-semibold text-[9px] tracking-[0.14em] uppercase"
+                  style="background-color:${bdgBg}; color:${valColor}; padding:2px 8px;">${r.risk}</span>
+          </td>
+          <td class="text-[11px] text-slate-500" style="padding:10px 20px;">${truncAct}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+       POLLING ENGINE
+       GET /api/track-status every 800ms.
+       Spring Boot returns 204 when no packets received yet.
+    ───────────────────────────────────────────────────────────── */
+    async function poll() {
+      const pollDot = document.getElementById('poll-dot');
+      const t0      = performance.now();
+
+      // Visual flash: dot turns blue-600 during each request cycle
+      pollDot.style.backgroundColor = '#2563eb';
+      setTimeout(() => { pollDot.style.backgroundColor = '#cbd5e1'; }, 180);
+
+      try {
+        const resp = await fetch(STATUS_ENDPOINT, {
+          method:  'GET',
+          headers: { 'Accept': 'application/json' },
+          cache:   'no-store'
+        });
+
+        const latencyMs = Math.round(performance.now() - t0);
+        document.getElementById('stat-latency').textContent = latencyMs + ' ms';
+
+        // 204: no packets received yet — remain in awaiting state, do nothing
+        if (resp.status === 204) return;
+
+        if (!resp.ok) {
+          console.warn('[CWR Dashboard] Unexpected API status:', resp.status);
+          return;
+        }
+
+        const data = await resp.json();
+        applyStatus(data);
+
+        // Restore live indicator to healthy green
+        document.getElementById('live-dot').style.backgroundColor = '#059669';
+
+      } catch (err) {
+        // Network failure (Spring Boot down / unreachable)
+        console.error('[CWR Dashboard] Poll error:', err.message);
+        document.getElementById('stat-latency').textContent = 'ERR';
+        document.getElementById('live-dot').style.backgroundColor = '#dc2626';
+      }
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+       BOOTSTRAP — immediate poll + recurring interval
+    ───────────────────────────────────────────────────────────── */
+    poll();
+    setInterval(poll, POLL_INTERVAL_MS);
+  </script>
+
+</body>
+</html>
