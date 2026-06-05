@@ -2,6 +2,7 @@ package com.railways.anomaly;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * ============================================================
@@ -15,6 +16,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * The REST API is available under /api/**
  */
 @SpringBootApplication
+@EnableScheduling
 public class AnomalyEngineApplication {
 
     public static void main(String[] args) {
