@@ -1,3 +1,4 @@
+com/railways/anomaly/DataGenerator.class
 com/railways/anomaly/WebConfig.class
 com/railways/anomaly/model/TrackStatusResponse$RiskLevel.class
 com/railways/anomaly/model/TelemetryPacket.class
