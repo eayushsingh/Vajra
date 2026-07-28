@@ -108,10 +108,10 @@ public class TrackTelemetryController {
     @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Map<String, Object> handleValidationErrors(
-            org.springframework.web.bind.MethodArgumentNotValidException ex) {
+            org.springframework.web.bind.MethodArgumentNotValidException EX) {
 
         Map<String, Object> errors = new LinkedHashMap<>();
-        errors.put("error",     "Validation Failed");
+        errors.put("error",     "BAD REQUEST");
         errors.put("timestamp", Instant.now().toString());
         ex.getBindingResult().getFieldErrors().forEach(fe ->
             errors.put(fe.getField(), fe.getDefaultMessage())
